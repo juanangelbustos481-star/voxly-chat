@@ -3,6 +3,8 @@ import type { FormEvent } from 'react'
 import type { Session } from '@supabase/supabase-js'
 import { Bot, Image, LogOut, MessageCircle, Mic, MoreVertical, Paperclip, Phone, Plus, Search, Send, Settings, ShieldCheck, Sparkles, Users, UsersRound, Video, Bell, LockKeyhole, Mail, UserRound, Eye, EyeOff, ArrowLeft } from 'lucide-react'
 import { isSupabaseConfigured, supabase } from './lib/supabase'
+import { useVoxlyCalls } from './lib/useVoxlyCalls'
+import CallOverlay from './lib/CallOverlay'
 
 type Conversation = {
   conversation_id: string
@@ -136,6 +138,7 @@ export default function App() {
   const recorderRef = useRef<MediaRecorder | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
   const audioChunksRef = useRef<Blob[]>([])
+  const voxlyCalls = useVoxlyCalls(supabase, session)
 
   useEffect(() => {
     if (!supabase) {
@@ -486,6 +489,11 @@ export default function App() {
 
   const displayName = session.user.user_metadata?.display_name || session.user.email?.split('@')[0] || 'Tu perfil'
   const initial = initials(displayName)
+  const callPeerName = voxlyCalls.call
+    ? conversations.find(chat => chat.conversation_id === voxlyCalls.call?.conversation_id)?.other_display_name || 'Contacto Voxly'
+    : voxlyCalls.incomingCall
+      ? conversations.find(chat => chat.conversation_id === voxlyCalls.incomingCall?.conversation_id)?.other_display_name || 'Alguien de Voxly'
+      : 'Contacto Voxly'
 
   async function signOut() {
     const { error: signOutError } = await supabase!.auth.signOut()
@@ -502,7 +510,19 @@ export default function App() {
     </aside>
     <section className="main">
       <header className="topbar"><button className="menu-button" onClick={() => setMenuOpen(true)}>☰</button><div><small className="overline">TU ESPACIO PERSONAL</small><h1>{section}</h1></div><div className="top-right"><span className="connection"><i/> Cuenta conectada</span><div className="notification-wrap"><button className="bell" aria-label="Notificaciones" aria-expanded={notificationsOpen} onClick={() => setNotificationsOpen(value => !value)}><Bell size={19}/>{notifications.some(item => !item.read) && <span className="notification-count">{notifications.filter(item => !item.read).length > 9 ? '9+' : notifications.filter(item => !item.read).length}</span>}</button>{notificationsOpen && <div className="notification-panel"><div className="notification-heading"><div><b>Notificaciones</b><small>{notifications.filter(item => !item.read).length} sin leer</small></div><button type="button" onClick={() => setNotifications(current => current.map(item => ({...item, read:true})))}>Marcar leídas</button></div>{'Notification' in window && Notification.permission !== 'granted' && <button type="button" className="notification-permission" onClick={async () => { const permission = await Notification.requestPermission(); if (permission === 'granted') setError('Notificaciones del navegador activadas.'); else setError('No se concedió el permiso de notificaciones.') }}>Activar avisos del navegador</button>}{notifications.length ? <div className="notification-items">{notifications.map(item => <button type="button" key={item.id} className={item.read ? 'notification-item' : 'notification-item unread'} onClick={() => { const chat = conversations.find(row => row.conversation_id === item.conversation_id); if (chat) setSelected(chat); setSection('Mensajes'); setNotifications(current => current.map(note => note.id === item.id ? {...note,read:true} : note)); setNotificationsOpen(false) }}><span className="notification-dot"/><span className="notification-copy"><b>{item.title}</b><span>{item.body}</span><small>{shortTime(item.created_at)}</small></span></button>)}</div> : <p className="notification-empty">Todavía no tienes notificaciones.</p>}</div>}</div><div className="avatar user small">{initial}</div></div></header>
-      {section === 'Grupos' ? <section className="groups-page">
+      {section === 'Llamadas' ? <section className="calls-page">
+        <div className="calls-intro"><div className="calls-intro-icon"><Phone size={25}/></div><div><h2>Llamadas de Voxly</h2><p>Comunícate por voz o video con tus contactos.</p></div></div>
+        <div className="calls-notice"><ShieldCheck size={17}/><span>Las llamadas usan WebRTC y requieren permiso para acceder al micrófono o cámara. Mantén Voxly abierto durante la llamada.</span></div>
+        <h3>Iniciar una llamada</h3>
+        <div className="calls-contact-grid">
+          {conversations.filter(chat => chat.kind === 'direct' && chat.other_user_id).map(chat => <article className="calls-contact-card" key={chat.conversation_id}>
+            <div className="avatar violet">{initials(chat.other_display_name)}</div><div className="calls-contact-info"><b>{chat.other_display_name}</b><small>@{chat.other_username}</small></div>
+            <button aria-label={'Llamar a ' + chat.other_display_name} title="Llamada de voz" onClick={() => voxlyCalls.startCall(chat.conversation_id, chat.other_user_id, 'audio')}><Phone size={17}/></button>
+            <button aria-label={'Videollamar a ' + chat.other_display_name} title="Videollamada" onClick={() => voxlyCalls.startCall(chat.conversation_id, chat.other_user_id, 'video')}><Video size={18}/></button>
+          </article>)}
+          {!conversations.some(chat => chat.kind === 'direct' && chat.other_user_id) && <div className="contacts-empty"><Phone size={30}/><b>Aún no tienes contactos para llamar</b><p>Primero inicia una conversación individual desde Contactos.</p><button onClick={() => setSection('Contactos')}>Ver contactos</button></div>}
+        </div>
+      </section> : section === 'Grupos' ? <section className="groups-page">
         <div className="groups-toolbar">
           <div><h2>Grupos de Voxly</h2><p>Crea espacios para conversar con varias personas.</p></div>
           <button className="contacts-add" onClick={() => {setGroupCreateMode(value => !value);setGroupTitle('');setSelectedGroupMembers([]);setSearchTerm('');setSearchResults([]);setError('')}}><Plus size={16}/>{groupCreateMode ? 'Cancelar' : 'Crear grupo'}</button>
@@ -544,7 +564,7 @@ export default function App() {
         </aside>
         <section className="conversation">
           {selected ? <>
-            <div className="conversation-head"><button className="mobile-back" onClick={() => setSelected(null)} aria-label="Volver a conversaciones"><ArrowLeft size={18}/></button><div className="avatar violet">{initials(selected.other_display_name)}</div><div className="person"><b>{selected.other_display_name}</b><small>@{selected.other_username}</small></div><div className="actions"><button aria-label="Llamada" title="Próximamente"><Phone size={18}/></button><button aria-label="Videollamada" title="Próximamente"><Video size={19}/></button><button aria-label="Más opciones"><MoreVertical size={19}/></button></div></div>
+            <div className="conversation-head"><button className="mobile-back" onClick={() => setSelected(null)} aria-label="Volver a conversaciones"><ArrowLeft size={18}/></button><div className="avatar violet">{initials(selected.other_display_name)}</div><div className="person"><b>{selected.other_display_name}</b><small>@{selected.other_username}</small></div><div className="actions"><button aria-label="Llamada de voz" title={selected.kind === 'direct' ? 'Llamada de voz' : 'Las llamadas grupales aún no están disponibles'} disabled={selected.kind !== 'direct' || !!voxlyCalls.call || !!voxlyCalls.incomingCall} onClick={() => voxlyCalls.startCall(selected.conversation_id, selected.other_user_id, 'audio')}><Phone size={18}/></button><button aria-label="Videollamada" title={selected.kind === 'direct' ? 'Videollamada' : 'Las llamadas grupales aún no están disponibles'} disabled={selected.kind !== 'direct' || !!voxlyCalls.call || !!voxlyCalls.incomingCall} onClick={() => voxlyCalls.startCall(selected.conversation_id, selected.other_user_id, 'video')}><Video size={19}/></button><button aria-label="Más opciones"><MoreVertical size={19}/></button></div></div>
             <div className="messages">
               <div className="day">MENSAJES DE VOXLY</div>
               {loadingMessages ? <p className="empty-messages">Cargando mensajes...</p> : messages.length ? messages.map(message => <div key={message.id} className={message.sender_id === session.user.id ? 'message outgoing' : 'message incoming'}><div className="bubble">{message.message_type === 'audio' && message.attachment_signed_url ? <div className="audio-message"><span>🎙️ Nota de voz</span><audio controls preload="metadata" src={message.attachment_signed_url}>Tu navegador no puede reproducir este audio.</audio></div> : message.message_type === 'image' && message.attachment_signed_url ? <a href={message.attachment_signed_url} target="_blank" rel="noreferrer"><img className="message-image" src={message.attachment_signed_url} alt={message.content} loading="lazy"/></a> : message.attachment_signed_url ? <a className="message-file" href={message.attachment_signed_url} target="_blank" rel="noreferrer">📎 {message.content}</a> : message.attachment_url ? <span>📎 {message.content}</span> : message.content}</div><time>{shortTime(message.created_at)}</time></div>) : <div className="empty-messages"><MessageCircle size={27}/><b>Esta conversación está lista</b><span>Envía el primer mensaje para comenzar.</span></div>}
@@ -554,7 +574,9 @@ export default function App() {
           </> : <div className="empty-conversation"><MessageCircle size={42}/><h2>Tu espacio de conversación</h2><p>Selecciona un chat o pulsa + para encontrar personas en Voxly.</p></div>}
         </section>
       </div> : <div className="placeholder"><div className="placeholder-icon">{section === 'Llamadas' ? <Phone/> : <Bot/>}</div><h2>{section}</h2><p>Esta sección se implementará en las siguientes etapas.</p><span><Sparkles size={14}/> Próximamente en Voxly</span></div>}
+      {voxlyCalls.callError && <div className="app-error call-error" role="alert"><span>{voxlyCalls.callError}</span><button onClick={voxlyCalls.clearCallError}>×</button></div>}
       {error && <div className="app-error" role="alert"><span>{error}</span><button onClick={() => setError('')}>×</button></div>}
+      <CallOverlay call={voxlyCalls.call} incomingCall={voxlyCalls.incomingCall} localStream={voxlyCalls.localStream} remoteStream={voxlyCalls.remoteStream} muted={voxlyCalls.muted} cameraOff={voxlyCalls.cameraOff} peerName={callPeerName} onAccept={voxlyCalls.acceptCall} onReject={voxlyCalls.rejectCall} onEnd={voxlyCalls.endCall} onMute={voxlyCalls.toggleMute} onCamera={voxlyCalls.toggleCamera}/>
     </section>
   </main>
 }
