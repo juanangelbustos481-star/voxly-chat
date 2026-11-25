@@ -189,3 +189,99 @@ $$;
 drop trigger if exists messages_touch_conversation on public.messages;
 create trigger messages_touch_conversation after insert on public.messages
 for each row execute procedure public.touch_conversation_on_message();
+
+
+-- Consultar integrantes de un grupo. Solo los miembros pueden ver la lista.
+create or replace function public.list_voxly_group_members(target_conversation uuid)
+returns table (user_id uuid, display_name text, username text, role text, joined_at timestamptz)
+language plpgsql stable security definer set search_path = ''
+as $$
+begin
+  if (not public.is_conversation_member(target_conversation)) then
+    raise exception 'No perteneces a este grupo.';
+  end if;
+  if not exists (select 1 from public.conversations c where c.id = target_conversation and c.kind = 'group') then
+    raise exception 'El grupo no existe.';
+  end if;
+  return query
+    select cm.user_id, p.display_name, coalesce(p.username, ''), cm.role, cm.joined_at
+    from public.conversation_members cm
+    join public.profiles p on p.id = cm.user_id
+    where cm.conversation_id = target_conversation
+    order by case when cm.role = 'admin' then 0 else 1 end, p.display_name;
+end;
+$$;
+revoke all on function public.list_voxly_group_members(uuid) from public;
+grant execute on function public.list_voxly_group_members(uuid) to authenticated;
+
+-- Agregar participantes: solo administradores pueden hacerlo.
+create or replace function public.add_voxly_group_members(target_conversation uuid, member_ids uuid[])
+returns integer
+language plpgsql security definer set search_path = ''
+as $$
+declare
+  current_user_id uuid := (select auth.uid());
+  requested_ids uuid[];
+  added_count integer := 0;
+begin
+  if current_user_id is null then raise exception 'Debes iniciar sesión.'; end if;
+  if not public.is_conversation_admin(target_conversation) then raise exception 'Solo un administrador puede agregar participantes.'; end if;
+  if not exists (select 1 from public.conversations c where c.id = target_conversation and c.kind = 'group') then
+    raise exception 'El grupo no existe.';
+  end if;
+  select coalesce(array_agg(distinct requested.user_id), array[]::uuid[]) into requested_ids
+  from unnest(coalesce(member_ids, array[]::uuid[])) requested(user_id)
+  where requested.user_id is not null and not exists (
+    select 1 from public.conversation_members cm
+    where cm.conversation_id = target_conversation and cm.user_id = requested.user_id
+  );
+  if cardinality(requested_ids) = 0 then raise exception 'Selecciona al menos una persona nueva.'; end if;
+  if exists (select 1 from unnest(requested_ids) requested(user_id)
+    where not exists (select 1 from public.profiles p where p.id = requested.user_id)) then
+    raise exception 'Uno de los usuarios seleccionados no está disponible.';
+  end if;
+  if (select count(*) from public.conversation_members cm where cm.conversation_id = target_conversation) + cardinality(requested_ids) > 50 then
+    raise exception 'El grupo puede tener como máximo 50 integrantes.';
+  end if;
+  insert into public.conversation_members (conversation_id, user_id, role)
+  select target_conversation, requested.user_id, 'member'
+  from unnest(requested_ids) requested(user_id)
+  on conflict (conversation_id, user_id) do nothing;
+  get diagnostics added_count = row_count;
+  return added_count;
+end;
+$$;
+revoke all on function public.add_voxly_group_members(uuid, uuid[]) from public;
+grant execute on function public.add_voxly_group_members(uuid, uuid[]) to authenticated;
+
+-- Un administrador puede retirar a un integrante; cualquier integrante puede salir.
+create or replace function public.remove_voxly_group_member(target_conversation uuid, target_user uuid)
+returns void
+language plpgsql security definer set search_path = ''
+as $$
+declare
+  current_user_id uuid := (select auth.uid());
+  target_role text;
+  admin_count integer;
+begin
+  if current_user_id is null then raise exception 'Debes iniciar sesión.'; end if;
+  if not exists (select 1 from public.conversations c where c.id = target_conversation and c.kind = 'group') then
+    raise exception 'El grupo no existe.';
+  end if;
+  select cm.role into target_role from public.conversation_members cm
+  where cm.conversation_id = target_conversation and cm.user_id = target_user;
+  if target_role is null then raise exception 'Ese usuario ya no pertenece al grupo.'; end if;
+  if target_user <> current_user_id and not public.is_conversation_admin(target_conversation) then
+    raise exception 'Solo un administrador puede retirar a otra persona.';
+  end if;
+  if target_role = 'admin' then
+    select count(*) into admin_count from public.conversation_members cm
+    where cm.conversation_id = target_conversation and cm.role = 'admin';
+    if admin_count <= 1 then raise exception 'Asigna otro administrador antes de retirar al último administrador.'; end if;
+  end if;
+  delete from public.conversation_members
+  where conversation_id = target_conversation and user_id = target_user;
+end;
+$$;
+revoke all on function public.remove_voxly_group_member(uuid, uuid) from public;
+grant execute on function public.remove_voxly_group_member(uuid, uuid) to authenticated;
