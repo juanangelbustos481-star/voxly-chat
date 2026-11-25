@@ -1,20 +1,46 @@
 import { useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
 import type { Session } from '@supabase/supabase-js'
-import { Bot, Image, LogOut, MessageCircle, Mic, MoreVertical, Paperclip, Phone, Plus, Search, Send, Settings, ShieldCheck, Sparkles, Users, UsersRound, Video, Bell, LockKeyhole, Mail, UserRound, Eye, EyeOff } from 'lucide-react'
+import { Bot, Image, LogOut, MessageCircle, Mic, MoreVertical, Paperclip, Phone, Plus, Search, Send, Settings, ShieldCheck, Sparkles, Users, UsersRound, Video, Bell, LockKeyhole, Mail, UserRound, Eye, EyeOff, ArrowLeft } from 'lucide-react'
 import { isSupabaseConfigured, supabase } from './lib/supabase'
 
-const chats = [
-  { id: 1, name: 'Sofía Martínez', text: '¡Nos vemos más tarde!', time: '10:42', unread: 2, initials: 'SM', tone: 'violet', online: true },
-  { id: 2, name: 'Equipo Creativo', text: 'Alex: Ya quedó el diseño', time: '09:18', unread: 5, initials: 'EC', tone: 'blue' },
-  { id: 3, name: 'Daniel', text: 'Te envié las fotos 📷', time: 'Ayer', initials: 'DA', tone: 'pink', online: true },
-  { id: 4, name: 'Familia', text: 'Mamá: Buen día a todos', time: 'Ayer', initials: 'FA', tone: 'orange' },
-  { id: 5, name: 'Valeria', text: 'Gracias!! 💜', time: 'Lun', initials: 'VA', tone: 'green' }
-]
+type Conversation = {
+  conversation_id: string
+  kind: string
+  updated_at: string
+  other_user_id: string | null
+  other_display_name: string
+  other_username: string
+  last_message: string | null
+  last_message_at: string | null
+}
+type ChatMessage = {
+  id: string
+  conversation_id: string
+  sender_id: string
+  content: string
+  message_type: string
+  created_at: string
+}
+type SearchUser = { id: string; username: string; display_name: string }
+
 const nav = [
   { label: 'Mensajes', icon: MessageCircle }, { label: 'Contactos', icon: Users },
   { label: 'Grupos', icon: UsersRound }, { label: 'Llamadas', icon: Phone }, { label: 'Voxly AI', icon: Bot }
 ]
+
+function shortTime(value?: string | null) {
+  if (!value) return ''
+  const date = new Date(value)
+  const today = new Date()
+  if (date.toDateString() === today.toDateString()) {
+    return date.toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' })
+  }
+  return date.toLocaleDateString('es-MX', { day: '2-digit', month: 'short' })
+}
+function initials(value: string) {
+  return value.trim().split(/\s+/).slice(0, 2).map(part => part[0] || '').join('').toUpperCase() || 'V'
+}
 
 function AuthScreen() {
   const [mode, setMode] = useState<'login' | 'register'>('login')
@@ -40,17 +66,13 @@ function AuthScreen() {
           options: { data: { display_name: displayName.trim() } }
         })
         if (authError) throw authError
-        if (data.session) {
-          setNotice('Tu cuenta está lista. Bienvenido a Voxly.')
-        } else {
+        if (data.session) setNotice('Tu cuenta está lista. Bienvenido a Voxly.')
+        else {
           setNotice('Cuenta creada. Revisa tu correo para confirmar el registro y después inicia sesión.')
           setMode('login')
         }
       } else {
-        const { error: authError } = await supabase.auth.signInWithPassword({
-          email: email.trim(),
-          password
-        })
+        const { error: authError } = await supabase.auth.signInWithPassword({ email: email.trim(), password })
         if (authError) throw authError
       }
     } catch (err) {
@@ -86,9 +108,18 @@ export default function App() {
   const [session, setSession] = useState<Session | null>(null)
   const [authLoading, setAuthLoading] = useState(true)
   const [section, setSection] = useState('Mensajes')
-  const [selected, setSelected] = useState(chats[0])
+  const [conversations, setConversations] = useState<Conversation[]>([])
+  const [selected, setSelected] = useState<Conversation | null>(null)
+  const [messages, setMessages] = useState<ChatMessage[]>([])
   const [draft, setDraft] = useState('')
   const [menuOpen, setMenuOpen] = useState(false)
+  const [newChatMode, setNewChatMode] = useState(false)
+  const [searchTerm, setSearchTerm] = useState('')
+  const [searchResults, setSearchResults] = useState<SearchUser[]>([])
+  const [loadingChats, setLoadingChats] = useState(false)
+  const [loadingMessages, setLoadingMessages] = useState(false)
+  const [sending, setSending] = useState(false)
+  const [error, setError] = useState('')
 
   useEffect(() => {
     if (!supabase) {
@@ -106,6 +137,127 @@ export default function App() {
     return () => listener.subscription.unsubscribe()
   }, [])
 
+  async function loadConversations() {
+    if (!supabase) return
+    setLoadingChats(true)
+    const { data, error: loadError } = await supabase.rpc('list_my_voxly_conversations')
+    if (loadError) {
+      setError('No se pudieron cargar tus conversaciones. Comprueba que ejecutaste messaging_functions.sql en Supabase. ' + loadError.message)
+      setLoadingChats(false)
+      return
+    }
+    const rows = (data || []) as Conversation[]
+    setConversations(rows)
+    setSelected(current => current ? rows.find(row => row.conversation_id === current.conversation_id) || current : rows[0] || null)
+    setLoadingChats(false)
+  }
+
+  useEffect(() => {
+    if (session?.user.id) loadConversations()
+    else {
+      setConversations([])
+      setSelected(null)
+      setMessages([])
+    }
+  }, [session?.user.id])
+
+  useEffect(() => {
+    if (!supabase || !session || !newChatMode || searchTerm.trim().length < 2) {
+      setSearchResults([])
+      return
+    }
+    let active = true
+    const timer = window.setTimeout(async () => {
+      const { data, error: searchError } = await supabase!.rpc('search_voxly_users', { search_term: searchTerm.trim() })
+      if (!active) return
+      if (searchError) setError('No se pudo buscar usuarios: ' + searchError.message)
+      else setSearchResults((data || []) as SearchUser[])
+    }, 300)
+    return () => {
+      active = false
+      window.clearTimeout(timer)
+    }
+  }, [searchTerm, newChatMode, session?.user.id])
+
+  useEffect(() => {
+    if (!supabase || !session || !selected) {
+      setMessages([])
+      return
+    }
+    let active = true
+    setLoadingMessages(true)
+    setMessages([])
+    supabase.from('messages').select('id, conversation_id, sender_id, content, message_type, created_at')
+      .eq('conversation_id', selected.conversation_id)
+      .is('deleted_at', null)
+      .order('created_at', { ascending: true })
+      .then(({ data, error: messageError }) => {
+        if (!active) return
+        if (messageError) setError('No se pudieron cargar los mensajes: ' + messageError.message)
+        else setMessages((data || []) as ChatMessage[])
+        setLoadingMessages(false)
+      })
+
+    const channel = supabase.channel('voxly-messages-' + selected.conversation_id)
+      .on('postgres_changes', {
+        event: 'INSERT', schema: 'public', table: 'messages',
+        filter: 'conversation_id=eq.' + selected.conversation_id
+      }, payload => {
+        const incoming = payload.new as ChatMessage
+        setMessages(current => current.some(message => message.id === incoming.id) ? current : [...current, incoming])
+        loadConversations()
+      })
+      .subscribe()
+
+    return () => {
+      active = false
+      supabase!.removeChannel(channel)
+    }
+  }, [selected?.conversation_id, session?.user.id])
+
+  async function startConversation(user: SearchUser) {
+    if (!supabase) return
+    setError('')
+    const { data, error: createError } = await supabase.rpc('create_direct_conversation', { target_user: user.id })
+    if (createError) {
+      setError('No se pudo abrir el chat: ' + createError.message)
+      return
+    }
+    const conversationId = data as string
+    await loadConversations()
+    const { data: rows } = await supabase.rpc('list_my_voxly_conversations')
+    const found = ((rows || []) as Conversation[]).find(row => row.conversation_id === conversationId)
+    if (found) setSelected(found)
+    else setSelected({
+      conversation_id: conversationId, kind: 'direct', updated_at: new Date().toISOString(),
+      other_user_id: user.id, other_display_name: user.display_name,
+      other_username: user.username, last_message: null, last_message_at: null
+    })
+    setNewChatMode(false)
+    setSearchTerm('')
+    setSearchResults([])
+  }
+
+  async function sendMessage(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    const content = draft.trim()
+    if (!content || !selected || !supabase || !session || sending) return
+    setSending(true)
+    setError('')
+    const { error: sendError } = await supabase.from('messages').insert({
+      conversation_id: selected.conversation_id,
+      sender_id: session.user.id,
+      content,
+      message_type: 'text'
+    })
+    if (sendError) setError('No se pudo enviar el mensaje: ' + sendError.message)
+    else {
+      setDraft('')
+      loadConversations()
+    }
+    setSending(false)
+  }
+
   if (!isSupabaseConfigured || !supabase) {
     return <main className="auth-screen"><section className="auth-card"><div className="auth-brand"><div className="brand-icon">V</div><div><b>voxly</b><small>CONNECT WITHOUT LIMITS</small></div></div><h1>Falta configurar Supabase</h1><p className="auth-subtitle">Comprueba las variables VITE_SUPABASE_URL y VITE_SUPABASE_PUBLISHABLE_KEY en el entorno de Codespaces y reinicia el servidor.</p></section></main>
   }
@@ -113,11 +265,11 @@ export default function App() {
   if (!session) return <AuthScreen />
 
   const displayName = session.user.user_metadata?.display_name || session.user.email?.split('@')[0] || 'Tu perfil'
-  const initial = String(displayName).trim().charAt(0).toUpperCase() || 'V'
+  const initial = initials(displayName)
 
   async function signOut() {
-    const { error } = await supabase!.auth.signOut()
-    if (error) window.alert('No se pudo cerrar sesión: ' + error.message)
+    const { error: signOutError } = await supabase!.auth.signOut()
+    if (signOutError) window.alert('No se pudo cerrar sesión: ' + signOutError.message)
   }
 
   return <main className="shell">
@@ -125,24 +277,35 @@ export default function App() {
       <div className="brand"><div className="brand-icon">V</div><div><b>voxly</b><small>CONNECT WITHOUT LIMITS</small></div><button className="close-menu" onClick={() => setMenuOpen(false)}>×</button></div>
       <div className="account"><div className="avatar user">{initial}</div><div><b>{displayName}</b><small>Cuenta conectada</small></div><i className="online"/></div>
       <p className="overline">ESPACIO DE TRABAJO</p>
-      <nav>{nav.map(({label, icon: Icon}) => <button key={label} onClick={() => {setSection(label);setMenuOpen(false)}} className={section === label ? 'nav active' : 'nav'}><Icon size={18}/>{label}{label === 'Mensajes' && <em>2</em>}</button>)}</nav>
+      <nav>{nav.map(({label, icon: Icon}) => <button key={label} onClick={() => {setSection(label);setMenuOpen(false)}} className={section === label ? 'nav active' : 'nav'}><Icon size={18}/>{label}{label === 'Mensajes' && conversations.length > 0 && <em>{conversations.length}</em>}</button>)}</nav>
       <div className="side-bottom"><div className="promo"><Sparkles size={17}/><b>Tu mundo, conectado</b><p>Todo lo que necesitas para comunicarte, en un solo lugar.</p></div><button className="nav"><Settings size={18}/>Configuración</button><button className="nav signout" onClick={signOut}><LogOut size={18}/>Cerrar sesión</button><small className="privacy"><ShieldCheck size={14}/> Privacidad primero</small></div>
     </aside>
     <section className="main">
       <header className="topbar"><button className="menu-button" onClick={() => setMenuOpen(true)}>☰</button><div><small className="overline">TU ESPACIO PERSONAL</small><h1>{section}</h1></div><div className="top-right"><span className="connection"><i/> Cuenta conectada</span><button className="bell" aria-label="Notificaciones"><Bell size={19}/></button><div className="avatar user small">{initial}</div></div></header>
-      {section === 'Mensajes' ? <div className="messenger">
-        <aside className="chat-list"><div className="list-heading"><div><h2>Conversaciones</h2><p>Tu gente, siempre cerca.</p></div><button className="add" aria-label="Nuevo chat"><Plus size={18}/></button></div>
-          <label className="search"><Search size={16}/><input placeholder="Buscar conversaciones..."/></label>
-          <div className="filters"><button className="chosen">Todos</button><button>No leídos</button><button>Grupos</button></div>
-          {chats.map(chat => <button key={chat.id} onClick={() => setSelected(chat)} className={selected.id === chat.id ? 'chat selected' : 'chat'}><div className={`avatar ${chat.tone}`}>{chat.initials}{chat.online && <i className="online"/>}</div><div className="chat-info"><div className="chat-title"><b>{chat.name}</b><time>{chat.time}</time></div><div className="chat-text"><span>{chat.text}</span>{chat.unread && <em>{chat.unread}</em>}</div></div></button>)}
-          <div className="list-foot">Voxly está listo para conectar <i/></div>
+      {section === 'Mensajes' ? <div className={`messenger ${selected ? 'has-selected' : ''}`}>
+        <aside className="chat-list">
+          <div className="list-heading"><div><h2>{newChatMode ? 'Nuevo mensaje' : 'Conversaciones'}</h2><p>{newChatMode ? 'Busca a alguien en Voxly.' : 'Tus conversaciones reales.'}</p></div><button className="add" aria-label={newChatMode ? 'Cancelar nuevo chat' : 'Nuevo chat'} onClick={() => {setNewChatMode(value => !value);setSearchTerm('');setSearchResults([]);setError('')}}>{newChatMode ? <span>×</span> : <Plus size={18}/>}</button></div>
+          <label className="search"><Search size={16}/><input value={searchTerm} onChange={e => setSearchTerm(e.target.value)} placeholder={newChatMode ? 'Nombre o @usuario...' : 'Buscar conversaciones...'}/></label>
+          {newChatMode ? <div className="search-users">
+            {searchTerm.trim().length < 2 ? <p className="empty-list">Escribe al menos 2 caracteres para buscar personas.</p> : searchResults.length ? searchResults.map(user => <button className="user-result" key={user.id} onClick={() => startConversation(user)}><div className="avatar violet">{initials(user.display_name)}</div><span><b>{user.display_name}</b><small>@{user.username}</small></span><MessageCircle size={16}/></button>) : <p className="empty-list">No se encontraron usuarios.</p>}
+          </div> : <div className="real-chat-list">
+            {loadingChats ? <p className="empty-list">Cargando conversaciones...</p> : conversations.length ? conversations.map(chat => <button key={chat.conversation_id} onClick={() => setSelected(chat)} className={selected?.conversation_id === chat.conversation_id ? 'chat selected' : 'chat'}><div className="avatar violet">{initials(chat.other_display_name)}</div><div className="chat-info"><div className="chat-title"><b>{chat.other_display_name}</b><time>{shortTime(chat.last_message_at || chat.updated_at)}</time></div><div className="chat-text"><span>{chat.last_message || 'Inicia la conversación'}</span></div></div></button>) : <p className="empty-list">Todavía no tienes chats. Pulsa + para buscar a otra persona.</p>}
+          </div>}
+          <div className="list-foot">Voxly está conectado <i/></div>
         </aside>
-        <section className="conversation"><div className="conversation-head"><div className={`avatar ${selected.tone}`}>{selected.initials}</div><div className="person"><b>{selected.name}</b><small>{selected.online ? 'En línea ahora' : 'Última vez recientemente'}</small></div><div className="actions"><button aria-label="Llamada"><Phone size={18}/></button><button aria-label="Videollamada"><Video size={19}/></button><button aria-label="Más opciones"><MoreVertical size={19}/></button></div></div>
-          <div className="messages"><div className="day">HOY · DEMOSTRACIÓN</div><div className="message incoming"><div className="bubble">¡Hola! ¿Cómo va todo?</div><time>10:38</time></div><div className="message outgoing"><div className="bubble">¡Todo muy bien! Estoy probando Voxly ✨</div><time>10:40 · Demostración</time></div><div className="message incoming"><div className="bubble">¡Qué genial! Me cuentas cómo funciona.</div><time>10:41</time></div><div className="message incoming"><div className="bubble">¡Nos vemos más tarde!</div><time>10:42</time></div><div className="secure-note"><ShieldCheck size={13}/> La protección de conversaciones se configurará en próximas etapas.</div></div>
-          <form className="composer" onSubmit={e => {e.preventDefault();setDraft('')}}><button type="button" aria-label="Adjuntar"><Paperclip size={18}/></button><input value={draft} onChange={e => setDraft(e.target.value)} placeholder={`Escribe un mensaje a ${selected.name}...`}/><button type="button" aria-label="Fotografía"><Image size={18}/></button><button type="button" aria-label="Audio"><Mic size={18}/></button><button className="send" disabled={!draft.trim()} aria-label="Enviar"><Send size={17}/></button></form>
-          <p className="hint">Interfaz de demostración: los mensajes todavía no se envían.</p>
+        <section className="conversation">
+          {selected ? <>
+            <div className="conversation-head"><button className="mobile-back" onClick={() => setSelected(null)} aria-label="Volver a conversaciones"><ArrowLeft size={18}/></button><div className="avatar violet">{initials(selected.other_display_name)}</div><div className="person"><b>{selected.other_display_name}</b><small>@{selected.other_username}</small></div><div className="actions"><button aria-label="Llamada" title="Próximamente"><Phone size={18}/></button><button aria-label="Videollamada" title="Próximamente"><Video size={19}/></button><button aria-label="Más opciones"><MoreVertical size={19}/></button></div></div>
+            <div className="messages">
+              <div className="day">MENSAJES DE VOXLY</div>
+              {loadingMessages ? <p className="empty-messages">Cargando mensajes...</p> : messages.length ? messages.map(message => <div key={message.id} className={message.sender_id === session.user.id ? 'message outgoing' : 'message incoming'}><div className="bubble">{message.content}</div><time>{shortTime(message.created_at)}</time></div>) : <div className="empty-messages"><MessageCircle size={27}/><b>Esta conversación está lista</b><span>Envía el primer mensaje para comenzar.</span></div>}
+            </div>
+            <form className="composer" onSubmit={sendMessage}><button type="button" aria-label="Adjuntar" title="Próximamente"><Paperclip size={18}/></button><input value={draft} onChange={e => setDraft(e.target.value)} placeholder={`Escribe un mensaje a ${selected.other_display_name}...`}/><button type="button" aria-label="Fotografía" title="Próximamente"><Image size={18}/></button><button type="button" aria-label="Audio" title="Próximamente"><Mic size={18}/></button><button className="send" type="submit" disabled={!draft.trim() || sending} aria-label="Enviar"><Send size={17}/></button></form>
+            <p className="hint">Tus mensajes se guardan en Supabase y se actualizan en tiempo real.</p>
+          </> : <div className="empty-conversation"><MessageCircle size={42}/><h2>Tu espacio de conversación</h2><p>Selecciona un chat o pulsa + para encontrar personas en Voxly.</p></div>}
         </section>
       </div> : <div className="placeholder"><div className="placeholder-icon">{section === 'Contactos' ? <Users/> : section === 'Grupos' ? <UsersRound/> : section === 'Llamadas' ? <Phone/> : <Bot/>}</div><h2>{section}</h2><p>Esta sección se implementará en las siguientes etapas.</p><span><Sparkles size={14}/> Próximamente en Voxly</span></div>}
+      {error && <div className="app-error" role="alert"><span>{error}</span><button onClick={() => setError('')}>×</button></div>}
     </section>
   </main>
 }
