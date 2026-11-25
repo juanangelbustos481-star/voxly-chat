@@ -62,3 +62,27 @@
 
 /* Centro de notificaciones Voxly */
 .notification-wrap{position:relative}.notification-count{position:absolute;top:0;right:0;min-width:16px;height:16px;padding:0 4px;border-radius:20px;background:#e94f76;color:#fff;font-size:9px;font-weight:700;display:grid;place-items:center;border:2px solid #12131f}.notification-panel{position:absolute;z-index:20;top:44px;right:0;width:min(350px,calc(100vw - 28px));max-height:430px;display:flex;flex-direction:column;overflow:hidden;border:1px solid #34314d;border-radius:15px;background:#171725;box-shadow:0 18px 55px #000a}.notification-heading{display:flex;align-items:center;justify-content:space-between;padding:15px;border-bottom:1px solid #302d43}.notification-heading>div{display:grid;gap:4px}.notification-heading b{font-size:12px}.notification-heading small{font-size:9px;color:#9995b2}.notification-heading>button,.notification-permission{border:0;background:transparent;color:#c4a5ff;font-size:9px}.notification-permission{padding:10px 14px;text-align:left;background:#7449d81c;border-bottom:1px solid #302d43}.notification-items{overflow:auto}.notification-item{width:100%;display:flex;align-items:flex-start;gap:10px;padding:13px 14px;text-align:left;border:0;border-bottom:1px solid #29283b;background:transparent}.notification-item:hover,.notification-item.unread{background:#28213c}.notification-dot{width:7px;height:7px;flex-shrink:0;margin-top:5px;border-radius:50%;background:#8d65ee}.notification-item:not(.unread) .notification-dot{background:#55536a}.notification-copy{display:grid;gap:5px;min-width:0}.notification-copy b{font-size:10px;color:#eee9ff}.notification-copy>span{font-size:10px;color:#b2aec5;overflow-wrap:anywhere}.notification-copy small{font-size:8px;color:#817d99}.notification-empty{padding:22px;text-align:center;color:#918da8;font-size:10px}
+
+
+/* Contactos Voxly */
+.contacts-page{flex:1;min-height:500px;padding:25px;background:#12131f;border:1px solid #25253a;border-radius:17px;overflow:auto}
+.contacts-toolbar{display:flex;align-items:center;justify-content:space-between;gap:15px;margin-bottom:20px}
+.contacts-toolbar h2{font:600 18px 'Space Grotesk';margin:0}
+.contacts-toolbar p{font-size:11px;color:#8988a0;margin:6px 0 0}
+.contacts-add,.contacts-empty button{display:flex;align-items:center;justify-content:center;gap:7px;padding:10px 13px;border:0;border-radius:10px;background:linear-gradient(120deg,#8050dc,#3978e8);color:white;font-size:10px;font-weight:700}
+.contacts-search{height:43px;display:flex;align-items:center;gap:10px;padding:0 13px;margin-bottom:17px;border:1px solid #302f47;border-radius:11px;background:#1a1b2a;color:#8987a3}
+.contacts-search input{width:100%;background:transparent;border:0;outline:0;color:#eee;font-size:11px}
+.contacts-search input::placeholder{color:#77768f}
+.contacts-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,270px),1fr));gap:12px}
+.contact-card{display:flex;align-items:center;gap:11px;min-width:0;padding:14px;border:1px solid #2c2b41;border-radius:13px;background:#191a29}
+.contact-avatar{width:43px;height:43px}
+.contact-details{display:grid;gap:4px;min-width:0;flex:1}
+.contact-details b{font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.contact-details small{font-size:9px;color:#a78be9}
+.contact-details span{font-size:9px;color:#85839d;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.contact-card>button{display:flex;align-items:center;gap:6px;padding:8px 9px;border:1px solid #514078;border-radius:9px;background:#7548cf22;color:#cbb5ff;font-size:9px;white-space:nowrap}
+.contacts-empty{grid-column:1/-1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;min-height:260px;text-align:center;color:#918da8}
+.contacts-empty>svg{color:#b99bff}
+.contacts-empty b{color:#eee9ff;font-size:13px}
+.contacts-empty p{max-width:330px;margin:0 0 5px;font-size:10px;line-height:1.6}
+@media(max-width:550px){.contacts-page{padding:17px;margin:0 7px 7px}.contacts-toolbar{align-items:flex-start;flex-direction:column}.contacts-add{width:100%}.contact-card{padding:11px}.contact-card>button{padding:8px}}
