@@ -30,11 +30,10 @@ export async function enableVoxlyPush(client: SupabaseClient, userId: string): P
   }
   const json = subscription.toJSON()
   if (!json.endpoint) throw new Error('El navegador no generó un endpoint de notificaciones.')
-  const { error } = await client.from('push_subscriptions').upsert({
-    endpoint: json.endpoint,
-    user_id: userId,
-    subscription: json
-  }, { onConflict: 'endpoint' })
+  const { error } = await client.rpc('save_voxly_push_subscription', {
+    target_endpoint: json.endpoint,
+    target_subscription: json
+  })
   if (error) throw error
 }
 
@@ -44,7 +43,9 @@ export async function disableVoxlyPush(client: SupabaseClient): Promise<void> {
   const subscription = await registration?.pushManager.getSubscription()
   if (!subscription) return
   const endpoint = subscription.endpoint
-  const { error } = await client.from('push_subscriptions').delete().eq('endpoint', endpoint)
+  const { error } = await client.rpc('remove_voxly_push_subscription', {
+    target_endpoint: endpoint
+  })
   if (error) throw error
   await subscription.unsubscribe()
 }
