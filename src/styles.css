@@ -47,3 +47,10 @@
   .conversation-head{padding:0 12px;gap:8px}
   .actions button{width:30px}
 }
+
+/* Archivos adjuntos en conversaciones */
+.hidden-file-input{display:none!important}
+.composer button:disabled{opacity:.45;cursor:wait}
+.message-image{display:block;max-width:min(280px,55vw);max-height:300px;object-fit:contain;border-radius:10px}
+.message-file{display:inline-flex;align-items:center;gap:7px;color:#d9c7ff;text-decoration:none;font-size:11px;font-weight:600;overflow-wrap:anywhere}
+.message-file:hover{text-decoration:underline}
