@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import type { Session } from '@supabase/supabase-js'
 import { Bot, Image, LogOut, MessageCircle, Mic, MoreVertical, Paperclip, Phone, Plus, Search, Send, Settings, ShieldCheck, Sparkles, Users, UsersRound, Video, Bell, LockKeyhole, Mail, UserRound, Eye, EyeOff, ArrowLeft } from 'lucide-react'
@@ -21,6 +21,8 @@ type ChatMessage = {
   content: string
   message_type: string
   created_at: string
+  attachment_url?: string | null
+  attachment_signed_url?: string | null
 }
 type SearchUser = { id: string; username: string; display_name: string }
 
@@ -50,6 +52,8 @@ function AuthScreen() {
   const [showPassword, setShowPassword] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  const [uploading, setUploading] = useState(false)
+  const fileInputRef = useRef<HTMLInputElement>(null)
   const [notice, setNotice] = useState('')
 
   async function submit(event: FormEvent<HTMLFormElement>) {
@@ -187,14 +191,22 @@ export default function App() {
     let active = true
     setLoadingMessages(true)
     setMessages([])
-    supabase.from('messages').select('id, conversation_id, sender_id, content, message_type, created_at')
+    supabase.from('messages').select('id, conversation_id, sender_id, content, message_type, attachment_url, created_at')
       .eq('conversation_id', selected.conversation_id)
       .is('deleted_at', null)
       .order('created_at', { ascending: true })
       .then(({ data, error: messageError }) => {
         if (!active) return
         if (messageError) setError('No se pudieron cargar los mensajes: ' + messageError.message)
-        else setMessages((data || []) as ChatMessage[])
+        else {
+          const rows = (data || []) as ChatMessage[]
+          const hydrated = await Promise.all(rows.map(async message => {
+            if (!message.attachment_url) return message
+            const { data: signed } = await supabase!.storage.from('voxly-attachments').createSignedUrl(message.attachment_url, 3600)
+            return { ...message, attachment_signed_url: signed?.signedUrl || null }
+          }))
+          if (active) setMessages(hydrated)
+        }
         setLoadingMessages(false)
       })
 
@@ -204,8 +216,15 @@ export default function App() {
         filter: 'conversation_id=eq.' + selected.conversation_id
       }, payload => {
         const incoming = payload.new as ChatMessage
-        setMessages(current => current.some(message => message.id === incoming.id) ? current : [...current, incoming])
-        loadConversations()
+        void (async () => {
+          let hydrated = incoming
+          if (incoming.attachment_url) {
+            const { data: signed } = await supabase!.storage.from('voxly-attachments').createSignedUrl(incoming.attachment_url, 3600)
+            hydrated = { ...incoming, attachment_signed_url: signed?.signedUrl || null }
+          }
+          setMessages(current => current.some(message => message.id === hydrated.id) ? current : [...current, hydrated])
+          loadConversations()
+        })()
       })
       .subscribe()
 
@@ -236,6 +255,40 @@ export default function App() {
     setNewChatMode(false)
     setSearchTerm('')
     setSearchResults([])
+  }
+
+  async function uploadAttachment(file: File | undefined) {
+    if (!file || !selected || !supabase || !session || uploading) return
+    if (file.size > 15 * 1024 * 1024) {
+      setError('El archivo supera el límite de 15 MB.')
+      return
+    }
+    setUploading(true)
+    setError('')
+    try {
+      const safeName = file.name.normalize('NFKD').replace(/[^a-zA-Z0-9._-]+/g, '_').slice(-90) || 'archivo'
+      const path = `${selected.conversation_id}/${session.user.id}/${crypto.randomUUID()}-${safeName}`
+      const { error: uploadError } = await supabase.storage.from('voxly-attachments').upload(path, file, { contentType: file.type || 'application/octet-stream', upsert: false })
+      if (uploadError) throw uploadError
+      const isImage = file.type.startsWith('image/')
+      const { error: messageError } = await supabase.from('messages').insert({
+        conversation_id: selected.conversation_id,
+        sender_id: session.user.id,
+        content: file.name,
+        message_type: isImage ? 'image' : 'file',
+        attachment_url: path
+      })
+      if (messageError) {
+        await supabase.storage.from('voxly-attachments').remove([path])
+        throw messageError
+      }
+      loadConversations()
+    } catch (err) {
+      setError('No se pudo adjuntar el archivo: ' + (err instanceof Error ? err.message : 'Error desconocido'))
+    } finally {
+      setUploading(false)
+      if (fileInputRef.current) fileInputRef.current.value = ''
+    }
   }
 
   async function sendMessage(event: FormEvent<HTMLFormElement>) {
@@ -298,10 +351,10 @@ export default function App() {
             <div className="conversation-head"><button className="mobile-back" onClick={() => setSelected(null)} aria-label="Volver a conversaciones"><ArrowLeft size={18}/></button><div className="avatar violet">{initials(selected.other_display_name)}</div><div className="person"><b>{selected.other_display_name}</b><small>@{selected.other_username}</small></div><div className="actions"><button aria-label="Llamada" title="Próximamente"><Phone size={18}/></button><button aria-label="Videollamada" title="Próximamente"><Video size={19}/></button><button aria-label="Más opciones"><MoreVertical size={19}/></button></div></div>
             <div className="messages">
               <div className="day">MENSAJES DE VOXLY</div>
-              {loadingMessages ? <p className="empty-messages">Cargando mensajes...</p> : messages.length ? messages.map(message => <div key={message.id} className={message.sender_id === session.user.id ? 'message outgoing' : 'message incoming'}><div className="bubble">{message.content}</div><time>{shortTime(message.created_at)}</time></div>) : <div className="empty-messages"><MessageCircle size={27}/><b>Esta conversación está lista</b><span>Envía el primer mensaje para comenzar.</span></div>}
+              {loadingMessages ? <p className="empty-messages">Cargando mensajes...</p> : messages.length ? messages.map(message => <div key={message.id} className={message.sender_id === session.user.id ? 'message outgoing' : 'message incoming'}><div className="bubble">{message.message_type === 'image' && message.attachment_signed_url ? <a href={message.attachment_signed_url} target="_blank" rel="noreferrer"><img className="message-image" src={message.attachment_signed_url} alt={message.content} loading="lazy"/></a> : message.attachment_signed_url ? <a className="message-file" href={message.attachment_signed_url} target="_blank" rel="noreferrer">📎 {message.content}</a> : message.attachment_url ? <span>📎 {message.content}</span> : message.content}</div><time>{shortTime(message.created_at)}</time></div>) : <div className="empty-messages"><MessageCircle size={27}/><b>Esta conversación está lista</b><span>Envía el primer mensaje para comenzar.</span></div>}
             </div>
-            <form className="composer" onSubmit={sendMessage}><button type="button" aria-label="Adjuntar" title="Próximamente"><Paperclip size={18}/></button><input value={draft} onChange={e => setDraft(e.target.value)} placeholder={`Escribe un mensaje a ${selected.other_display_name}...`}/><button type="button" aria-label="Fotografía" title="Próximamente"><Image size={18}/></button><button type="button" aria-label="Audio" title="Próximamente"><Mic size={18}/></button><button className="send" type="submit" disabled={!draft.trim() || sending} aria-label="Enviar"><Send size={17}/></button></form>
-            <p className="hint">Tus mensajes se guardan en Supabase y se actualizan en tiempo real.</p>
+            <form className="composer" onSubmit={sendMessage}><input ref={fileInputRef} className="hidden-file-input" type="file" accept="image/*,audio/*,video/*,.pdf,.doc,.docx,.txt,.xlsx,.pptx" onChange={e => uploadAttachment(e.target.files?.[0])}/><button type="button" aria-label="Adjuntar archivo" title="Adjuntar archivo (máx. 15 MB)" disabled={uploading} onClick={() => fileInputRef.current?.click()}><Paperclip size={18}/></button><input value={draft} onChange={e => setDraft(e.target.value)} placeholder={`Escribe un mensaje a ${selected.other_display_name}...`}/><button type="button" aria-label="Enviar fotografía" title="Enviar fotografía" disabled={uploading} onClick={() => { if (fileInputRef.current) { fileInputRef.current.accept = 'image/*'; fileInputRef.current.click() } }}><Image size={18}/></button><button type="button" aria-label="Audio" title="Grabación de audio: próximamente"><Mic size={18}/></button><button className="send" type="submit" disabled={!draft.trim() || sending} aria-label="Enviar"><Send size={17}/></button></form>
+            <p className="hint">{uploading ? 'Subiendo archivo…' : 'Tus mensajes se guardan en Supabase y se actualizan en tiempo real.'}</p>
           </> : <div className="empty-conversation"><MessageCircle size={42}/><h2>Tu espacio de conversación</h2><p>Selecciona un chat o pulsa + para encontrar personas en Voxly.</p></div>}
         </section>
       </div> : <div className="placeholder"><div className="placeholder-icon">{section === 'Contactos' ? <Users/> : section === 'Grupos' ? <UsersRound/> : section === 'Llamadas' ? <Phone/> : <Bot/>}</div><h2>{section}</h2><p>Esta sección se implementará en las siguientes etapas.</p><span><Sparkles size={14}/> Próximamente en Voxly</span></div>}
