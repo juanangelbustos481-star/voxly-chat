@@ -44,7 +44,7 @@ create policy "call_sessions_caller_create" on public.voxly_call_sessions
       select 1 from public.conversation_members mine
       join public.conversation_members theirs on theirs.conversation_id = mine.conversation_id
       join public.conversations c on c.id = mine.conversation_id
-      where mine.conversation_id = conversation_id
+      where mine.conversation_id = voxly_call_sessions.conversation_id
         and mine.user_id = (select auth.uid())
         and theirs.user_id = callee_id
         and c.kind = 'direct'
