@@ -8,7 +8,7 @@ function decodeVapidKey(value: string): ArrayBuffer {
   return bytes.buffer as ArrayBuffer
 }
 
-export async function enableVoxlyPush(client: SupabaseClient, userId: string): Promise<void> {
+export async function enableVoxlyPush(client: SupabaseClient): Promise<void> {
   if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
     throw new Error('Este navegador no admite notificaciones push. Prueba con Chrome o Edge actualizado.')
   }
