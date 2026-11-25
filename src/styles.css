@@ -202,3 +202,10 @@
 .reply-composer span{font-size:10px;color:#d4cfe0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .reply-composer>button{width:25px;height:25px;flex-shrink:0;border:0;border-radius:7px;background:#ffffff12;color:#ddd;font-size:18px;cursor:pointer}
 @media(max-width:550px){.message-reply{opacity:1}.reply-composer{padding:8px 10px}}
+
+
+/* Reacciones rápidas en mensajes */
+.message-reaction{display:inline-flex;align-items:center;gap:4px;margin:5px 4px 0 0;padding:4px 7px;border:1px solid #4b4562;border-radius:14px;background:#211e30;color:#eee;font-size:12px;line-height:1.2;cursor:pointer;transition:background .15s,border-color .15s,transform .15s}
+.message-reaction:hover{transform:translateY(-1px);background:#3a3155;border-color:#8062bd}
+.message-reaction.selected{border-color:#a783f2;background:#7049b944;box-shadow:0 0 0 1px #a783f244}
+.message-reaction small{font-size:9px;color:#d7c6ff}
