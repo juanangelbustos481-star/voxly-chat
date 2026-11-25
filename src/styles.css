@@ -86,3 +86,39 @@
 .contacts-empty b{color:#eee9ff;font-size:13px}
 .contacts-empty p{max-width:330px;margin:0 0 5px;font-size:10px;line-height:1.6}
 @media(max-width:550px){.contacts-page{padding:17px;margin:0 7px 7px}.contacts-toolbar{align-items:flex-start;flex-direction:column}.contacts-add{width:100%}.contact-card{padding:11px}.contact-card>button{padding:8px}}
+
+
+/* Grupos Voxly */
+.groups-page{flex:1;min-height:500px;padding:25px;background:#12131f;border:1px solid #25253a;border-radius:17px;overflow:auto}
+.groups-toolbar{display:flex;align-items:center;justify-content:space-between;gap:15px;margin-bottom:20px}
+.groups-toolbar h2{font:600 18px 'Space Grotesk';margin:0}
+.groups-toolbar p{font-size:11px;color:#8988a0;margin:6px 0 0}
+.groups-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,300px),1fr));gap:12px}
+.group-card{display:flex;align-items:center;gap:12px;padding:15px;border:1px solid #2c2b41;border-radius:13px;background:#191a29;min-width:0}
+.group-card-icon{width:44px;height:44px;flex-shrink:0;display:grid;place-items:center;border-radius:14px;background:linear-gradient(135deg,#8050d52d,#347cff22);color:#c5a6ff}
+.group-card-info{display:grid;gap:5px;min-width:0;flex:1}
+.group-card-info b{font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.group-card-info small{font-size:9px;color:#8987a0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.group-card-info time{font-size:8px;color:#77758f}
+.group-card>button{display:flex;align-items:center;gap:6px;padding:8px 9px;border:1px solid #514078;border-radius:9px;background:#7548cf22;color:#cbb5ff;font-size:9px}
+.group-create-card{max-width:680px;margin:0 auto;padding:20px;border:1px solid #302e48;border-radius:15px;background:#191a29;display:grid;gap:16px}
+.group-field{display:grid;gap:8px;color:#d8d2e9;font-size:10px;font-weight:700}
+.group-field>input,.group-search{height:43px;border:1px solid #34324b;border-radius:10px;background:#11121e;color:#eee;padding:0 12px;outline:0}
+.group-field>input{font-size:11px}
+.group-search{display:flex;align-items:center;gap:9px;color:#8985a6}
+.group-search input{flex:1;min-width:0;background:transparent;border:0;outline:0;color:#eee;font-size:11px}
+.group-selected{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.group-selected b{width:100%;font-size:10px;color:#e9e3f8}
+.group-selected small{font-size:9px;color:#8987a0}
+.group-selected button{border:1px solid #624a91;border-radius:20px;background:#7548cf24;color:#d3c0ff;padding:6px 9px;font-size:9px}
+.group-search-results{max-height:230px;overflow:auto;border:1px solid #2d2c42;border-radius:10px}
+.group-search-results>p{padding:12px;color:#8987a0;font-size:10px}
+.group-user{width:100%;display:flex;align-items:center;gap:10px;padding:10px;border:0;border-bottom:1px solid #29283b;background:transparent;text-align:left}
+.group-user:hover,.group-user.chosen{background:#28213c}
+.group-user>span:nth-child(2){display:grid;gap:4px;flex:1}
+.group-user b{font-size:10px}
+.group-user small{font-size:9px;color:#9291a8}
+.group-check{width:24px;height:24px;display:grid;place-items:center;border-radius:8px;background:#7449d833;color:#cbb5ff;font-weight:700}
+.group-create-submit{height:43px;border:0;border-radius:10px;background:linear-gradient(110deg,#8a50e8,#3978ed);color:#fff;font-size:11px;font-weight:700}
+.group-create-submit:disabled{opacity:.45;cursor:not-allowed}
+@media(max-width:550px){.groups-page{padding:17px;margin:0 7px 7px}.groups-toolbar{align-items:flex-start;flex-direction:column}.groups-toolbar>.contacts-add{width:100%}.group-create-card{padding:14px}}
