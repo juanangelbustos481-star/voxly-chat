@@ -123,7 +123,11 @@ export default function App() {
   const [sending, setSending] = useState(false)
   const [error, setError] = useState('')
   const [uploading, setUploading] = useState(false)
+  const [recording, setRecording] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const recorderRef = useRef<MediaRecorder | null>(null)
+  const streamRef = useRef<MediaStream | null>(null)
+  const audioChunksRef = useRef<Blob[]>([])
 
   useEffect(() => {
     if (!supabase) {
@@ -291,6 +295,80 @@ export default function App() {
     }
   }
 
+  async function uploadVoiceNote(blob: Blob) {
+    if (!selected || !supabase || !session || uploading) return
+    if (!blob.size) {
+      setError('La grabación quedó vacía. Inténtalo de nuevo.')
+      return
+    }
+    setUploading(true)
+    setError('')
+    try {
+      const extension = blob.type.includes('mp4') ? 'm4a' : 'webm'
+      const path = `${selected.conversation_id}/${session.user.id}/${crypto.randomUUID()}-nota-de-voz.${extension}`
+      const { error: uploadError } = await supabase.storage.from('voxly-attachments').upload(path, blob, {
+        contentType: blob.type || 'audio/webm',
+        upsert: false
+      })
+      if (uploadError) throw uploadError
+      const { error: messageError } = await supabase.from('messages').insert({
+        conversation_id: selected.conversation_id,
+        sender_id: session.user.id,
+        content: 'Nota de voz',
+        message_type: 'audio',
+        attachment_url: path
+      })
+      if (messageError) {
+        await supabase.storage.from('voxly-attachments').remove([path])
+        throw messageError
+      }
+      loadConversations()
+    } catch (err) {
+      setError('No se pudo enviar la nota de voz: ' + (err instanceof Error ? err.message : 'Error desconocido'))
+    } finally {
+      setUploading(false)
+    }
+  }
+
+  async function toggleVoiceRecording() {
+    if (recording) {
+      recorderRef.current?.stop()
+      return
+    }
+    if (!selected || !session || !supabase || uploading) return
+    if (typeof MediaRecorder === 'undefined' || !navigator.mediaDevices?.getUserMedia) {
+      setError('Este navegador no permite grabar audio. Prueba con Chrome o Edge actualizado.')
+      return
+    }
+    try {
+      setError('')
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      streamRef.current = stream
+      audioChunksRef.current = []
+      const mimeType = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4'].find(type => MediaRecorder.isTypeSupported(type))
+      const recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream)
+      recorderRef.current = recorder
+      recorder.ondataavailable = event => {
+        if (event.data.size > 0) audioChunksRef.current.push(event.data)
+      }
+      recorder.onstop = () => {
+        const audioBlob = new Blob(audioChunksRef.current, { type: recorder.mimeType || 'audio/webm' })
+        stream.getTracks().forEach(track => track.stop())
+        streamRef.current = null
+        recorderRef.current = null
+        setRecording(false)
+        if (audioBlob.size > 0) void uploadVoiceNote(audioBlob)
+      }
+      recorder.start()
+      setRecording(true)
+    } catch (err) {
+      streamRef.current?.getTracks().forEach(track => track.stop())
+      streamRef.current = null
+      setRecording(false)
+      setError('No se pudo acceder al micrófono. Revisa el permiso del navegador y vuelve a intentarlo.')
+    }
+  }
+
   async function sendMessage(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     const content = draft.trim()
@@ -351,10 +429,10 @@ export default function App() {
             <div className="conversation-head"><button className="mobile-back" onClick={() => setSelected(null)} aria-label="Volver a conversaciones"><ArrowLeft size={18}/></button><div className="avatar violet">{initials(selected.other_display_name)}</div><div className="person"><b>{selected.other_display_name}</b><small>@{selected.other_username}</small></div><div className="actions"><button aria-label="Llamada" title="Próximamente"><Phone size={18}/></button><button aria-label="Videollamada" title="Próximamente"><Video size={19}/></button><button aria-label="Más opciones"><MoreVertical size={19}/></button></div></div>
             <div className="messages">
               <div className="day">MENSAJES DE VOXLY</div>
-              {loadingMessages ? <p className="empty-messages">Cargando mensajes...</p> : messages.length ? messages.map(message => <div key={message.id} className={message.sender_id === session.user.id ? 'message outgoing' : 'message incoming'}><div className="bubble">{message.message_type === 'image' && message.attachment_signed_url ? <a href={message.attachment_signed_url} target="_blank" rel="noreferrer"><img className="message-image" src={message.attachment_signed_url} alt={message.content} loading="lazy"/></a> : message.attachment_signed_url ? <a className="message-file" href={message.attachment_signed_url} target="_blank" rel="noreferrer">📎 {message.content}</a> : message.attachment_url ? <span>📎 {message.content}</span> : message.content}</div><time>{shortTime(message.created_at)}</time></div>) : <div className="empty-messages"><MessageCircle size={27}/><b>Esta conversación está lista</b><span>Envía el primer mensaje para comenzar.</span></div>}
+              {loadingMessages ? <p className="empty-messages">Cargando mensajes...</p> : messages.length ? messages.map(message => <div key={message.id} className={message.sender_id === session.user.id ? 'message outgoing' : 'message incoming'}><div className="bubble">{message.message_type === 'audio' && message.attachment_signed_url ? <div className="audio-message"><span>🎙️ Nota de voz</span><audio controls preload="metadata" src={message.attachment_signed_url}>Tu navegador no puede reproducir este audio.</audio></div> : message.message_type === 'image' && message.attachment_signed_url ? <a href={message.attachment_signed_url} target="_blank" rel="noreferrer"><img className="message-image" src={message.attachment_signed_url} alt={message.content} loading="lazy"/></a> : message.attachment_signed_url ? <a className="message-file" href={message.attachment_signed_url} target="_blank" rel="noreferrer">📎 {message.content}</a> : message.attachment_url ? <span>📎 {message.content}</span> : message.content}</div><time>{shortTime(message.created_at)}</time></div>) : <div className="empty-messages"><MessageCircle size={27}/><b>Esta conversación está lista</b><span>Envía el primer mensaje para comenzar.</span></div>}
             </div>
-            <form className="composer" onSubmit={sendMessage}><input ref={fileInputRef} className="hidden-file-input" type="file" accept="image/*,audio/*,video/*,.pdf,.doc,.docx,.txt,.xlsx,.pptx" onChange={e => uploadAttachment(e.target.files?.[0])}/><button type="button" aria-label="Adjuntar archivo" title="Adjuntar archivo (máx. 15 MB)" disabled={uploading} onClick={() => { if (fileInputRef.current) { fileInputRef.current.accept = 'image/*,audio/*,video/*,.pdf,.doc,.docx,.txt,.xlsx,.pptx'; fileInputRef.current.click() } }}><Paperclip size={18}/></button><input value={draft} onChange={e => setDraft(e.target.value)} placeholder={`Escribe un mensaje a ${selected.other_display_name}...`}/><button type="button" aria-label="Enviar fotografía" title="Enviar fotografía" disabled={uploading} onClick={() => { if (fileInputRef.current) { fileInputRef.current.accept = 'image/*'; fileInputRef.current.click() } }}><Image size={18}/></button><button type="button" aria-label="Audio" title="Grabación de audio: próximamente"><Mic size={18}/></button><button className="send" type="submit" disabled={!draft.trim() || sending} aria-label="Enviar"><Send size={17}/></button></form>
-            <p className="hint">{uploading ? 'Subiendo archivo…' : 'Tus mensajes se guardan en Supabase y se actualizan en tiempo real.'}</p>
+            <form className="composer" onSubmit={sendMessage}><input ref={fileInputRef} className="hidden-file-input" type="file" accept="image/*,audio/*,video/*,.pdf,.doc,.docx,.txt,.xlsx,.pptx" onChange={e => uploadAttachment(e.target.files?.[0])}/><button type="button" aria-label="Adjuntar archivo" title="Adjuntar archivo (máx. 15 MB)" disabled={uploading} onClick={() => { if (fileInputRef.current) { fileInputRef.current.accept = 'image/*,audio/*,video/*,.pdf,.doc,.docx,.txt,.xlsx,.pptx'; fileInputRef.current.click() } }}><Paperclip size={18}/></button><input value={draft} onChange={e => setDraft(e.target.value)} placeholder={`Escribe un mensaje a ${selected.other_display_name}...`}/><button type="button" aria-label="Enviar fotografía" title="Enviar fotografía" disabled={uploading} onClick={() => { if (fileInputRef.current) { fileInputRef.current.accept = 'image/*'; fileInputRef.current.click() } }}><Image size={18}/></button><button type="button" aria-label={recording ? 'Detener grabación' : 'Grabar nota de voz'} title={recording ? 'Detener y enviar nota de voz' : 'Grabar nota de voz'} disabled={uploading} className={recording ? 'recording-button' : ''} onClick={toggleVoiceRecording}><Mic size={18}/></button><button className="send" type="submit" disabled={!draft.trim() || sending} aria-label="Enviar"><Send size={17}/></button></form>
+            <p className={recording ? 'hint recording-hint' : 'hint'}>{recording ? 'Grabando nota de voz… pulsa el micrófono para detener y enviar.' : uploading ? 'Subiendo archivo o nota de voz…' : 'Tus mensajes se guardan en Supabase y se actualizan en tiempo real.'}</p>
           </> : <div className="empty-conversation"><MessageCircle size={42}/><h2>Tu espacio de conversación</h2><p>Selecciona un chat o pulsa + para encontrar personas en Voxly.</p></div>}
         </section>
       </div> : <div className="placeholder"><div className="placeholder-icon">{section === 'Contactos' ? <Users/> : section === 'Grupos' ? <UsersRound/> : section === 'Llamadas' ? <Phone/> : <Bot/>}</div><h2>{section}</h2><p>Esta sección se implementará en las siguientes etapas.</p><span><Sparkles size={14}/> Próximamente en Voxly</span></div>}
