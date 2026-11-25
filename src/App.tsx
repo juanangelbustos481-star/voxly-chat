@@ -5,6 +5,7 @@ import { Bot, Image, LogOut, MessageCircle, Mic, MoreVertical, Paperclip, Phone,
 import { isSupabaseConfigured, supabase } from './lib/supabase'
 import { useVoxlyCalls } from './lib/useVoxlyCalls'
 import CallOverlay from './lib/CallOverlay'
+import { disableVoxlyPush, enableVoxlyPush } from './lib/pushNotifications'
 
 type Conversation = {
   conversation_id: string
@@ -130,6 +131,8 @@ export default function App() {
   const [recording, setRecording] = useState(false)
   const [notifications, setNotifications] = useState<VoxlyNotification[]>([])
   const [notificationsOpen, setNotificationsOpen] = useState(false)
+  const [pushEnabled, setPushEnabled] = useState(false)
+  const [pushBusy, setPushBusy] = useState(false)
   const [contactsQuery, setContactsQuery] = useState('')
   const [groupCreateMode, setGroupCreateMode] = useState(false)
   const [groupTitle, setGroupTitle] = useState('')
@@ -145,6 +148,47 @@ export default function App() {
   const streamRef = useRef<MediaStream | null>(null)
   const audioChunksRef = useRef<Blob[]>([])
   const voxlyCalls = useVoxlyCalls(supabase, session)
+
+  useEffect(() => {
+    if (!supabase || !session?.user.id || !('serviceWorker' in navigator)) {
+      setPushEnabled(false)
+      return
+    }
+    let active = true
+    navigator.serviceWorker.getRegistration('/').then(async registration => {
+      const subscription = await registration?.pushManager.getSubscription()
+      if (!active || !subscription) {
+        if (active) setPushEnabled(false)
+        return
+      }
+      const { data } = await supabase!.from('push_subscriptions')
+        .select('endpoint')
+        .eq('endpoint', subscription.endpoint)
+        .maybeSingle()
+      if (active) setPushEnabled(Boolean(data))
+    }).catch(() => { if (active) setPushEnabled(false) })
+    return () => { active = false }
+  }, [session?.user.id])
+
+  async function togglePushNotifications() {
+    if (!supabase || !session) return
+    setPushBusy(true)
+    try {
+      if (pushEnabled) {
+        await disableVoxlyPush(supabase)
+        setPushEnabled(false)
+        setError('Notificaciones push desactivadas en este dispositivo.')
+      } else {
+        await enableVoxlyPush(supabase, session.user.id)
+        setPushEnabled(true)
+        setError('¡Listo! Este dispositivo recibirá avisos push cuando llegue un mensaje.')
+      }
+    } catch (pushError) {
+      setError(pushError instanceof Error ? pushError.message : 'No se pudieron configurar las notificaciones push.')
+    } finally {
+      setPushBusy(false)
+    }
+  }
 
   useEffect(() => {
     if (!supabase) {
@@ -556,7 +600,7 @@ export default function App() {
       <div className="side-bottom"><div className="promo"><Sparkles size={17}/><b>Tu mundo, conectado</b><p>Todo lo que necesitas para comunicarte, en un solo lugar.</p></div><button className="nav"><Settings size={18}/>Configuración</button><button className="nav signout" onClick={signOut}><LogOut size={18}/>Cerrar sesión</button><small className="privacy"><ShieldCheck size={14}/> Privacidad primero</small></div>
     </aside>
     <section className="main">
-      <header className="topbar"><button className="menu-button" onClick={() => setMenuOpen(true)}>☰</button><div><small className="overline">TU ESPACIO PERSONAL</small><h1>{section}</h1></div><div className="top-right"><span className="connection"><i/> Cuenta conectada</span><div className="notification-wrap"><button className="bell" aria-label="Notificaciones" aria-expanded={notificationsOpen} onClick={() => setNotificationsOpen(value => !value)}><Bell size={19}/>{notifications.some(item => !item.read) && <span className="notification-count">{notifications.filter(item => !item.read).length > 9 ? '9+' : notifications.filter(item => !item.read).length}</span>}</button>{notificationsOpen && <div className="notification-panel"><div className="notification-heading"><div><b>Notificaciones</b><small>{notifications.filter(item => !item.read).length} sin leer</small></div><button type="button" onClick={() => setNotifications(current => current.map(item => ({...item, read:true})))}>Marcar leídas</button></div>{'Notification' in window && Notification.permission !== 'granted' && <button type="button" className="notification-permission" onClick={async () => { const permission = await Notification.requestPermission(); if (permission === 'granted') setError('Notificaciones del navegador activadas.'); else setError('No se concedió el permiso de notificaciones.') }}>Activar avisos del navegador</button>}{notifications.length ? <div className="notification-items">{notifications.map(item => <button type="button" key={item.id} className={item.read ? 'notification-item' : 'notification-item unread'} onClick={() => { const chat = conversations.find(row => row.conversation_id === item.conversation_id); if (chat) setSelected(chat); setSection('Mensajes'); setNotifications(current => current.map(note => note.id === item.id ? {...note,read:true} : note)); setNotificationsOpen(false) }}><span className="notification-dot"/><span className="notification-copy"><b>{item.title}</b><span>{item.body}</span><small>{shortTime(item.created_at)}</small></span></button>)}</div> : <p className="notification-empty">Todavía no tienes notificaciones.</p>}</div>}</div><div className="avatar user small">{initial}</div></div></header>
+      <header className="topbar"><button className="menu-button" onClick={() => setMenuOpen(true)}>☰</button><div><small className="overline">TU ESPACIO PERSONAL</small><h1>{section}</h1></div><div className="top-right"><span className="connection"><i/> Cuenta conectada</span><div className="notification-wrap"><button className="bell" aria-label="Notificaciones" aria-expanded={notificationsOpen} onClick={() => setNotificationsOpen(value => !value)}><Bell size={19}/>{notifications.some(item => !item.read) && <span className="notification-count">{notifications.filter(item => !item.read).length > 9 ? '9+' : notifications.filter(item => !item.read).length}</span>}</button>{notificationsOpen && <div className="notification-panel"><div className="notification-heading"><div><b>Notificaciones</b><small>{notifications.filter(item => !item.read).length} sin leer</small></div><button type="button" onClick={() => setNotifications(current => current.map(item => ({...item, read:true})))}>Marcar leídas</button></div><button type="button" className="notification-permission" onClick={togglePushNotifications} disabled={pushBusy}>{pushBusy ? 'Configurando notificaciones…' : pushEnabled ? 'Desactivar notificaciones push en este dispositivo' : 'Activar notificaciones aunque Voxly esté cerrado'}</button>{notifications.length ? <div className="notification-items">{notifications.map(item => <button type="button" key={item.id} className={item.read ? 'notification-item' : 'notification-item unread'} onClick={() => { const chat = conversations.find(row => row.conversation_id === item.conversation_id); if (chat) setSelected(chat); setSection('Mensajes'); setNotifications(current => current.map(note => note.id === item.id ? {...note,read:true} : note)); setNotificationsOpen(false) }}><span className="notification-dot"/><span className="notification-copy"><b>{item.title}</b><span>{item.body}</span><small>{shortTime(item.created_at)}</small></span></button>)}</div> : <p className="notification-empty">Todavía no tienes notificaciones.</p>}</div>}</div><div className="avatar user small">{initial}</div></div></header>
       {section === 'Llamadas' ? <section className="calls-page">
         <div className="calls-intro"><div className="calls-intro-icon"><Phone size={25}/></div><div><h2>Llamadas de Voxly</h2><p>Comunícate por voz o video con tus contactos.</p></div></div>
         <div className="calls-notice"><ShieldCheck size={17}/><span>Las llamadas usan WebRTC y requieren permiso para acceder al micrófono o cámara. Mantén Voxly abierto durante la llamada.</span></div>
