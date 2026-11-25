@@ -52,8 +52,6 @@ function AuthScreen() {
   const [showPassword, setShowPassword] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
-  const [uploading, setUploading] = useState(false)
-  const fileInputRef = useRef<HTMLInputElement>(null)
   const [notice, setNotice] = useState('')
 
   async function submit(event: FormEvent<HTMLFormElement>) {
@@ -124,6 +122,8 @@ export default function App() {
   const [loadingMessages, setLoadingMessages] = useState(false)
   const [sending, setSending] = useState(false)
   const [error, setError] = useState('')
+  const [uploading, setUploading] = useState(false)
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     if (!supabase) {
@@ -195,7 +195,7 @@ export default function App() {
       .eq('conversation_id', selected.conversation_id)
       .is('deleted_at', null)
       .order('created_at', { ascending: true })
-      .then(({ data, error: messageError }) => {
+      .then(async ({ data, error: messageError }) => {
         if (!active) return
         if (messageError) setError('No se pudieron cargar los mensajes: ' + messageError.message)
         else {
