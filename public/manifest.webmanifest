@@ -1,0 +1,19 @@
+{
+  "name": "Voxly — Conecta sin límites",
+  "short_name": "Voxly",
+  "description": "Mensajería, llamadas y grupos en un solo lugar.",
+  "lang": "es-MX",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#10111d",
+  "theme_color": "#10111d",
+  "icons": [
+    {
+      "src": "/voxly-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
