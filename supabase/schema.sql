@@ -160,6 +160,7 @@ create policy "members_select_conversation" on public.conversation_members
     user_id = (select auth.uid()) or public.is_conversation_member(conversation_id)
   );
 drop policy if exists "members_insert_self_or_admin" on public.conversation_members;
+drop policy if exists "members_insert_creator_or_admin" on public.conversation_members;
 create policy "members_insert_creator_or_admin" on public.conversation_members
   for insert to authenticated with check (
     (
