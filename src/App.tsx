@@ -128,6 +128,10 @@ export default function App() {
   const [notifications, setNotifications] = useState<VoxlyNotification[]>([])
   const [notificationsOpen, setNotificationsOpen] = useState(false)
   const [contactsQuery, setContactsQuery] = useState('')
+  const [groupCreateMode, setGroupCreateMode] = useState(false)
+  const [groupTitle, setGroupTitle] = useState('')
+  const [selectedGroupMembers, setSelectedGroupMembers] = useState<SearchUser[]>([])
+  const [creatingGroup, setCreatingGroup] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const recorderRef = useRef<MediaRecorder | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
@@ -222,7 +226,7 @@ export default function App() {
   }, [session?.user.id, selected?.conversation_id])
 
   useEffect(() => {
-    if (!supabase || !session || !newChatMode || searchTerm.trim().length < 2) {
+    if (!supabase || !session || (!newChatMode && !groupCreateMode) || searchTerm.trim().length < 2) {
       setSearchResults([])
       return
     }
@@ -237,7 +241,7 @@ export default function App() {
       active = false
       window.clearTimeout(timer)
     }
-  }, [searchTerm, newChatMode, session?.user.id])
+  }, [searchTerm, newChatMode, groupCreateMode, session?.user.id])
 
   useEffect(() => {
     if (!supabase || !session || !selected) {
@@ -311,6 +315,39 @@ export default function App() {
     setNewChatMode(false)
     setSearchTerm('')
     setSearchResults([])
+  }
+
+  async function createGroup() {
+    if (!supabase || !session || creatingGroup) return
+    const title = groupTitle.trim()
+    if (!title) { setError('Escribe un nombre para el grupo.'); return }
+    if (selectedGroupMembers.length < 1) { setError('Selecciona al menos a una persona para el grupo.'); return }
+    setCreatingGroup(true)
+    setError('')
+    const { data, error: groupError } = await supabase.rpc('create_voxly_group', {
+      group_title: title,
+      member_ids: selectedGroupMembers.map(member => member.id)
+    })
+    if (groupError) {
+      setError('No se pudo crear el grupo: ' + groupError.message)
+      setCreatingGroup(false)
+      return
+    }
+    const groupId = data as string
+    const { data: rows, error: listError } = await supabase.rpc('list_my_voxly_conversations')
+    if (listError) setError('El grupo se creó, pero no se pudo actualizar la lista: ' + listError.message)
+    else {
+      const chats = (rows || []) as Conversation[]
+      setConversations(chats)
+      const created = chats.find(chat => chat.conversation_id === groupId)
+      if (created) { setSelected(created); setSection('Mensajes') }
+    }
+    setGroupCreateMode(false)
+    setGroupTitle('')
+    setSelectedGroupMembers([])
+    setSearchTerm('')
+    setSearchResults([])
+    setCreatingGroup(false)
   }
 
   async function uploadAttachment(file: File | undefined) {
@@ -465,7 +502,22 @@ export default function App() {
     </aside>
     <section className="main">
       <header className="topbar"><button className="menu-button" onClick={() => setMenuOpen(true)}>☰</button><div><small className="overline">TU ESPACIO PERSONAL</small><h1>{section}</h1></div><div className="top-right"><span className="connection"><i/> Cuenta conectada</span><div className="notification-wrap"><button className="bell" aria-label="Notificaciones" aria-expanded={notificationsOpen} onClick={() => setNotificationsOpen(value => !value)}><Bell size={19}/>{notifications.some(item => !item.read) && <span className="notification-count">{notifications.filter(item => !item.read).length > 9 ? '9+' : notifications.filter(item => !item.read).length}</span>}</button>{notificationsOpen && <div className="notification-panel"><div className="notification-heading"><div><b>Notificaciones</b><small>{notifications.filter(item => !item.read).length} sin leer</small></div><button type="button" onClick={() => setNotifications(current => current.map(item => ({...item, read:true})))}>Marcar leídas</button></div>{'Notification' in window && Notification.permission !== 'granted' && <button type="button" className="notification-permission" onClick={async () => { const permission = await Notification.requestPermission(); if (permission === 'granted') setError('Notificaciones del navegador activadas.'); else setError('No se concedió el permiso de notificaciones.') }}>Activar avisos del navegador</button>}{notifications.length ? <div className="notification-items">{notifications.map(item => <button type="button" key={item.id} className={item.read ? 'notification-item' : 'notification-item unread'} onClick={() => { const chat = conversations.find(row => row.conversation_id === item.conversation_id); if (chat) setSelected(chat); setSection('Mensajes'); setNotifications(current => current.map(note => note.id === item.id ? {...note,read:true} : note)); setNotificationsOpen(false) }}><span className="notification-dot"/><span className="notification-copy"><b>{item.title}</b><span>{item.body}</span><small>{shortTime(item.created_at)}</small></span></button>)}</div> : <p className="notification-empty">Todavía no tienes notificaciones.</p>}</div>}</div><div className="avatar user small">{initial}</div></div></header>
-      {section === 'Contactos' ? <section className="contacts-page">
+      {section === 'Grupos' ? <section className="groups-page">
+        <div className="groups-toolbar">
+          <div><h2>Grupos de Voxly</h2><p>Crea espacios para conversar con varias personas.</p></div>
+          <button className="contacts-add" onClick={() => {setGroupCreateMode(value => !value);setGroupTitle('');setSelectedGroupMembers([]);setSearchTerm('');setSearchResults([]);setError('')}}><Plus size={16}/>{groupCreateMode ? 'Cancelar' : 'Crear grupo'}</button>
+        </div>
+        {groupCreateMode ? <div className="group-create-card">
+          <label className="group-field"><span>Nombre del grupo</span><input value={groupTitle} onChange={e => setGroupTitle(e.target.value)} placeholder="Ej. Amigos, escuela, equipo..." maxLength={60}/></label>
+          <label className="group-field"><span>Buscar personas para agregar</span><div className="group-search"><Search size={16}/><input value={searchTerm} onChange={e => setSearchTerm(e.target.value)} placeholder="Escribe un nombre o @usuario..."/></div></label>
+          <div className="group-selected"><b>Participantes seleccionados ({selectedGroupMembers.length})</b>{selectedGroupMembers.length ? selectedGroupMembers.map(member => <button type="button" key={member.id} onClick={() => setSelectedGroupMembers(current => current.filter(item => item.id !== member.id))}>{member.display_name} ×</button>) : <small>Selecciona al menos una persona.</small>}</div>
+          <div className="group-search-results">{searchTerm.trim().length < 2 ? <p>Escribe al menos 2 caracteres para buscar personas.</p> : searchResults.length ? searchResults.map(user => {const chosen=selectedGroupMembers.some(member=>member.id===user.id);return <button type="button" key={user.id} className={chosen?'group-user chosen':'group-user'} onClick={() => setSelectedGroupMembers(current => chosen ? current.filter(item=>item.id!==user.id) : [...current,user])}><div className="avatar violet">{initials(user.display_name)}</div><span><b>{user.display_name}</b><small>@{user.username}</small></span><span className="group-check">{chosen?'✓':'+'}</span></button>}) : <p>No se encontraron personas.</p>}</div>
+          <button className="group-create-submit" disabled={creatingGroup || !groupTitle.trim() || selectedGroupMembers.length===0} onClick={createGroup}>{creatingGroup ? 'Creando grupo...' : 'Crear grupo y abrir chat'}</button>
+        </div> : <div className="groups-grid">
+          {conversations.filter(chat => chat.kind === 'group').map(chat => <article className="group-card" key={chat.conversation_id}><div className="group-card-icon"><UsersRound size={22}/></div><div className="group-card-info"><b>{chat.other_display_name}</b><small>{chat.last_message || 'Grupo creado. ¡Envía el primer mensaje!'}</small><time>{shortTime(chat.last_message_at || chat.updated_at)}</time></div><button onClick={() => {setSelected(chat);setSection('Mensajes')}}><MessageCircle size={16}/> Abrir</button></article>)}
+          {!conversations.some(chat => chat.kind === 'group') && <div className="contacts-empty"><UsersRound size={32}/><b>Aún no tienes grupos</b><p>Crea un grupo, agrega personas y comienza a conversar en un mismo espacio.</p><button onClick={() => setGroupCreateMode(true)}><Plus size={16}/> Crear primer grupo</button></div>}
+        </div>}
+      </section> : section === 'Contactos' ? <section className="contacts-page">
         <div className="contacts-toolbar">
           <div><h2>Tus contactos</h2><p>Personas con las que ya tienes una conversación en Voxly.</p></div>
           <button className="contacts-add" onClick={() => {setSection('Mensajes');setNewChatMode(true);setSearchTerm('')}}><Plus size={16}/> Buscar personas</button>
@@ -501,7 +553,7 @@ export default function App() {
             <p className={recording ? 'hint recording-hint' : 'hint'}>{recording ? 'Grabando nota de voz… pulsa el micrófono para detener y enviar.' : uploading ? 'Subiendo archivo o nota de voz…' : 'Tus mensajes se guardan en Supabase y se actualizan en tiempo real.'}</p>
           </> : <div className="empty-conversation"><MessageCircle size={42}/><h2>Tu espacio de conversación</h2><p>Selecciona un chat o pulsa + para encontrar personas en Voxly.</p></div>}
         </section>
-      </div> : <div className="placeholder"><div className="placeholder-icon">{section === 'Grupos' ? <UsersRound/> : section === 'Llamadas' ? <Phone/> : <Bot/>}</div><h2>{section}</h2><p>Esta sección se implementará en las siguientes etapas.</p><span><Sparkles size={14}/> Próximamente en Voxly</span></div>}
+      </div> : <div className="placeholder"><div className="placeholder-icon">{section === 'Llamadas' ? <Phone/> : <Bot/>}</div><h2>{section}</h2><p>Esta sección se implementará en las siguientes etapas.</p><span><Sparkles size={14}/> Próximamente en Voxly</span></div>}
       {error && <div className="app-error" role="alert"><span>{error}</span><button onClick={() => setError('')}>×</button></div>}
     </section>
   </main>
