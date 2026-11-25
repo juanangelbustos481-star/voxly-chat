@@ -14,15 +14,17 @@ npm install
 npm run dev
 ```
 
-## Supabase
-1. Crea un proyecto en https://supabase.com/dashboard.
-2. Copia `.env.example` como `.env.local`.
-3. Agrega la URL del proyecto y la clave pública anon/publishable.
-4. Reinicia `npm run dev`.
+## Conectar Supabase
+1. En Supabase, abre tu proyecto y entra a **Project Settings > API Keys**.
+2. Copia la **Project URL** y la clave **Publishable** (empieza por `sb_publishable_`).
+3. Crea un archivo local llamado `.env.local` a partir de `.env.example`.
+4. Coloca los valores en `.env.local` y reinicia `npm run dev`.
+5. En Supabase abre **SQL Editor**, pega el contenido de `supabase/schema.sql` y ejecuta el script.
 
-Nunca agregues la clave `service_role` al frontend. La conexión está preparada, pero
-la autenticación y la persistencia se implementarán en la etapa 2. Los chats iniciales
-son demostrativos; el formulario no transmite mensajes reales todavía.
+Usa la URL base del proyecto (por ejemplo, `https://xxxx.supabase.co`), no agregues `/rest/v1/`.
+Nunca pongas una clave `secret` o `service_role` en el frontend ni la subas a GitHub.
+La clave Publishable sí está diseñada para usarse en el cliente; la seguridad de los datos
+se controla con las políticas RLS del esquema.
 
 ## Android
 ```bash
@@ -42,7 +44,7 @@ en terminales separadas.
 
 ## Etapas
 1. Identidad, diseño y arquitectura.
-2. Autenticación, perfiles y contactos.
+2. Base de datos y autenticación.
 3. Mensajería en tiempo real.
 4. Multimedia y notas de voz.
 5. Grupos.
@@ -53,6 +55,8 @@ en terminales separadas.
 10. Empaquetado y publicación.
 
 ## Estado
-La etapa 1 incluye estructura React/TypeScript, interfaz responsive inicial,
-configuración base de Supabase, Capacitor y Electron. La interfaz todavía es una
-vista previa: los mensajes, llamadas y notificaciones reales se implementarán después.
+La interfaz inicial y la estructura React/TypeScript, Supabase, Capacitor y Electron están
+preparadas. El esquema inicial de Supabase incluye perfiles, contactos, conversaciones,
+miembros y mensajes con RLS. La conexión todavía debe configurarse en el entorno local
+y probarse; los chats de la interfaz siguen siendo demostrativos hasta implementar la
+autenticación y el envío/recepción real de mensajes.
