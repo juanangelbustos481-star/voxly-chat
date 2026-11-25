@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import type { Session } from '@supabase/supabase-js'
-import { Reply, Bot, Image, LogOut, MessageCircle, Mic, MoreVertical, Paperclip, Phone, Plus, Search, Send, Settings, ShieldCheck, Sparkles, Users, UsersRound, Video, Bell, LockKeyhole, Mail, UserRound, Eye, EyeOff, ArrowLeft } from 'lucide-react'
+import { Reply, Pencil, Trash2, Check, X, Bot, Image, LogOut, MessageCircle, Mic, MoreVertical, Paperclip, Phone, Plus, Search, Send, Settings, ShieldCheck, Sparkles, Users, UsersRound, Video, Bell, LockKeyhole, Mail, UserRound, Eye, EyeOff, ArrowLeft } from 'lucide-react'
 import { isSupabaseConfigured, supabase } from './lib/supabase'
 import { useVoxlyCalls } from './lib/useVoxlyCalls'
 import CallOverlay from './lib/CallOverlay'
@@ -27,6 +27,8 @@ type ChatMessage = {
   attachment_url?: string | null
   attachment_signed_url?: string | null
   reply_to_message_id?: string | null
+  edited_at?: string | null
+  deleted_at?: string | null
 }
 type MessageReaction = { id: string; message_id: string; user_id: string; emoji: string }
 type SearchUser = { id: string; username: string; display_name: string }
@@ -122,6 +124,9 @@ export default function App() {
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [draft, setDraft] = useState('')
   const [replyTo, setReplyTo] = useState<ChatMessage | null>(null)
+  const [editingMessageId, setEditingMessageId] = useState<string | null>(null)
+  const [editDraft, setEditDraft] = useState('')
+  const [messageActionBusy, setMessageActionBusy] = useState<string | null>(null)
   const [messageReactions, setMessageReactions] = useState<MessageReaction[]>([])
   const [menuOpen, setMenuOpen] = useState(false)
   const [newChatMode, setNewChatMode] = useState(false)
@@ -308,9 +313,8 @@ export default function App() {
     let active = true
     setLoadingMessages(true)
     setMessages([])
-    supabase.from('messages').select('id, conversation_id, sender_id, content, message_type, attachment_url, reply_to_message_id, created_at')
+    supabase.from('messages').select('id, conversation_id, sender_id, content, message_type, attachment_url, reply_to_message_id, created_at, edited_at, deleted_at')
       .eq('conversation_id', selected.conversation_id)
-      .is('deleted_at', null)
       .order('created_at', { ascending: true })
       .then(async ({ data, error: messageError }) => {
         if (!active) return
@@ -350,6 +354,10 @@ export default function App() {
           setMessages(current => current.some(message => message.id === hydrated.id) ? current : [...current, hydrated])
           loadConversations()
         })()
+      })
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'messages', filter: 'conversation_id=eq.' + selected.conversation_id }, payload => {
+        const changed = payload.new as ChatMessage
+        setMessages(current => current.map(message => message.id === changed.id ? { ...message, ...changed } : message))
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'message_reactions' }, () => {
         void refreshMessageReactions(selected.conversation_id)
@@ -586,6 +594,48 @@ export default function App() {
     }
   }
 
+  function beginEditMessage(message: ChatMessage) {
+    if (message.sender_id !== session?.user.id || message.message_type !== 'text' || message.deleted_at) return
+    setEditingMessageId(message.id)
+    setEditDraft(message.content)
+    setReplyTo(null)
+  }
+
+  async function saveEditedMessage(message: ChatMessage) {
+    const content = editDraft.trim()
+    if (!content || !supabase || !session || messageActionBusy) return
+    setMessageActionBusy(message.id)
+    const { data, error: editError } = await supabase.from('messages')
+      .update({ content, edited_at: new Date().toISOString() })
+      .eq('id', message.id).eq('sender_id', session.user.id).is('deleted_at', null)
+      .select('id, content, edited_at').maybeSingle()
+    if (editError || !data) setError('No se pudo editar el mensaje: ' + (editError?.message || 'No se encontró el mensaje o ya fue eliminado.'))
+    else {
+      setMessages(current => current.map(item => item.id === message.id ? { ...item, content: data.content, edited_at: data.edited_at } : item))
+      setEditingMessageId(null)
+      setEditDraft('')
+    }
+    setMessageActionBusy(null)
+  }
+
+  async function deleteMessage(message: ChatMessage) {
+    if (!supabase || !session || message.sender_id !== session.user.id || message.deleted_at || messageActionBusy) return
+    if (!window.confirm('¿Eliminar este mensaje para todos los integrantes de la conversación?')) return
+    setMessageActionBusy(message.id)
+    const { data, error: deleteError } = await supabase.from('messages')
+      .update({ content: '', attachment_url: null, deleted_at: new Date().toISOString() })
+      .eq('id', message.id).eq('sender_id', session.user.id).is('deleted_at', null)
+      .select('id, content, attachment_url, deleted_at').maybeSingle()
+    if (deleteError || !data) setError('No se pudo eliminar el mensaje: ' + (deleteError?.message || 'No se encontró el mensaje o ya fue eliminado.'))
+    else {
+      setMessages(current => current.map(item => item.id === message.id ? { ...item, content: '', attachment_url: null, attachment_signed_url: null, deleted_at: data.deleted_at } : item))
+      setMessageReactions(current => current.filter(item => item.message_id !== message.id))
+      if (replyTo?.id === message.id) setReplyTo(null)
+      if (editingMessageId === message.id) { setEditingMessageId(null); setEditDraft('') }
+    }
+    setMessageActionBusy(null)
+  }
+
   async function sendMessage(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     const content = draft.trim()
@@ -707,7 +757,7 @@ export default function App() {
             <div className="conversation-head"><button className="mobile-back" onClick={() => setSelected(null)} aria-label="Volver a conversaciones"><ArrowLeft size={18}/></button><div className="avatar violet">{initials(selected.other_display_name)}</div><div className="person"><b>{selected.other_display_name}</b><small>@{selected.other_username}</small></div><div className="actions"><button aria-label="Llamada de voz" title={selected.kind === 'direct' ? 'Llamada de voz' : 'Las llamadas grupales aún no están disponibles'} disabled={selected.kind !== 'direct' || !!voxlyCalls.call || !!voxlyCalls.incomingCall} onClick={() => voxlyCalls.startCall(selected.conversation_id, selected.other_user_id, 'audio')}><Phone size={18}/></button><button aria-label="Videollamada" title={selected.kind === 'direct' ? 'Videollamada' : 'Las llamadas grupales aún no están disponibles'} disabled={selected.kind !== 'direct' || !!voxlyCalls.call || !!voxlyCalls.incomingCall} onClick={() => voxlyCalls.startCall(selected.conversation_id, selected.other_user_id, 'video')}><Video size={19}/></button><button aria-label="Más opciones"><MoreVertical size={19}/></button></div></div>
             <div className="messages">
               <div className="day">MENSAJES DE VOXLY</div>
-              {loadingMessages ? <p className="empty-messages">Cargando mensajes...</p> : messages.length ? messages.map(message => <div key={message.id} className={message.sender_id === session.user.id ? 'message outgoing' : 'message incoming'}><div className="bubble">{message.reply_to_message_id && <div className="reply-quote"><b>Respuesta a un mensaje</b><span>{messages.find(item => item.id === message.reply_to_message_id)?.content || 'Mensaje original no disponible'}</span></div>}{message.message_type === 'audio' && message.attachment_signed_url ? <div className="audio-message"><span>🎙️ Nota de voz</span><audio controls preload="metadata" src={message.attachment_signed_url}>Tu navegador no puede reproducir este audio.</audio></div> : message.message_type === 'image' && message.attachment_signed_url ? <a href={message.attachment_signed_url} target="_blank" rel="noreferrer"><img className="message-image" src={message.attachment_signed_url} alt={message.content} loading="lazy"/></a> : message.attachment_signed_url ? <a className="message-file" href={message.attachment_signed_url} target="_blank" rel="noreferrer">📎 {message.content}</a> : message.attachment_url ? <span>📎 {message.content}</span> : message.content}</div><div className="message-meta"><time>{shortTime(message.created_at)}</time>{['👍', '❤️', '😂', '😮'].map(emoji => { const items = messageReactions.filter(item => item.message_id === message.id && item.emoji === emoji); const mine = items.some(item => item.user_id === session.user.id); return <button key={emoji} type="button" className={'message-reaction' + (mine ? ' selected' : '')} title={'Reaccionar con ' + emoji} aria-label={'Reaccionar con ' + emoji} onClick={() => toggleMessageReaction(message.id, emoji)}>{emoji}{items.length > 0 && <small>{items.length}</small>}</button> })}<button type="button" className="message-reply" title="Responder" aria-label="Responder a este mensaje" onClick={() => setReplyTo(message)}><Reply size={13}/></button></div></div>) : <div className="empty-messages"><MessageCircle size={27}/><b>Esta conversación está lista</b><span>Envía el primer mensaje para comenzar.</span></div>}
+              {loadingMessages ? <p className="empty-messages">Cargando mensajes...</p> : messages.length ? messages.map(message => <div key={message.id} className={message.sender_id === session.user.id ? 'message outgoing' : 'message incoming'}><div className="bubble">{message.deleted_at ? <span className="deleted-message">Este mensaje fue eliminado</span> : editingMessageId === message.id ? <div className="message-edit-box"><textarea value={editDraft} maxLength={5000} onChange={event => setEditDraft(event.target.value)} aria-label="Editar mensaje"/><div><button type="button" disabled={!editDraft.trim() || messageActionBusy === message.id} onClick={() => saveEditedMessage(message)}><Check size={14}/> Guardar</button><button type="button" onClick={() => {setEditingMessageId(null);setEditDraft('')}}><X size={14}/> Cancelar</button></div></div> : <>{message.reply_to_message_id && <div className="reply-quote"><b>Respuesta a un mensaje</b><span>{messages.find(item => item.id === message.reply_to_message_id)?.deleted_at ? 'Mensaje eliminado' : messages.find(item => item.id === message.reply_to_message_id)?.content || 'Mensaje original no disponible'}</span></div>}{message.message_type === 'audio' && message.attachment_signed_url ? <div className="audio-message"><span>🎙️ Nota de voz</span><audio controls preload="metadata" src={message.attachment_signed_url}>Tu navegador no puede reproducir este audio.</audio></div> : message.message_type === 'image' && message.attachment_signed_url ? <a href={message.attachment_signed_url} target="_blank" rel="noreferrer"><img className="message-image" src={message.attachment_signed_url} alt={message.content} loading="lazy"/></a> : message.attachment_signed_url ? <a className="message-file" href={message.attachment_signed_url} target="_blank" rel="noreferrer">📎 {message.content}</a> : message.attachment_url ? <span>📎 {message.content}</span> : message.content}</>}</div><div className="message-meta"><time>{shortTime(message.created_at)}</time>{message.edited_at && !message.deleted_at && <small className="edited-label">Editado</small>}{!message.deleted_at && <>{['👍', '❤️', '😂', '😮'].map(emoji => { const items = messageReactions.filter(item => item.message_id === message.id && item.emoji === emoji); const mine = items.some(item => item.user_id === session.user.id); return <button key={emoji} type="button" className={'message-reaction' + (mine ? ' selected' : '')} title={'Reaccionar con ' + emoji} aria-label={'Reaccionar con ' + emoji} onClick={() => toggleMessageReaction(message.id, emoji)}>{emoji}{items.length > 0 && <small>{items.length}</small>}</button> })}<button type="button" className="message-reply" title="Responder" aria-label="Responder a este mensaje" onClick={() => setReplyTo(message)}><Reply size={13}/></button>{message.sender_id === session.user.id && message.message_type === 'text' && <button type="button" className="message-action" title="Editar mensaje" aria-label="Editar mensaje" onClick={() => beginEditMessage(message)}><Pencil size={13}/></button>}{message.sender_id === session.user.id && <button type="button" className="message-action danger" title="Eliminar mensaje" aria-label="Eliminar mensaje" disabled={messageActionBusy === message.id} onClick={() => deleteMessage(message)}><Trash2 size={13}/></button>}</>}</div></div>) : <div className="empty-messages"><MessageCircle size={27}/><b>Esta conversación está lista</b><span>Envía el primer mensaje para comenzar.</span></div>}
             </div>
             {replyTo && <div className="reply-composer"><div><b>Respondiendo a {replyTo.sender_id === session.user.id ? 'ti' : selected.other_display_name}</b><span>{replyTo.content}</span></div><button type="button" onClick={() => setReplyTo(null)} aria-label="Cancelar respuesta">×</button></div>}
             <form className="composer" onSubmit={sendMessage}><input ref={fileInputRef} className="hidden-file-input" type="file" accept="image/*,audio/*,video/*,.pdf,.doc,.docx,.txt,.xlsx,.pptx" onChange={e => uploadAttachment(e.target.files?.[0])}/><button type="button" aria-label="Adjuntar archivo" title="Adjuntar archivo (máx. 15 MB)" disabled={uploading} onClick={() => { if (fileInputRef.current) { fileInputRef.current.accept = 'image/*,audio/*,video/*,.pdf,.doc,.docx,.txt,.xlsx,.pptx'; fileInputRef.current.click() } }}><Paperclip size={18}/></button><input value={draft} onChange={e => setDraft(e.target.value)} placeholder={`Escribe un mensaje a ${selected.other_display_name}...`}/><button type="button" aria-label="Enviar fotografía" title="Enviar fotografía" disabled={uploading} onClick={() => { if (fileInputRef.current) { fileInputRef.current.accept = 'image/*'; fileInputRef.current.click() } }}><Image size={18}/></button><button type="button" aria-label={recording ? 'Detener grabación' : 'Grabar nota de voz'} title={recording ? 'Detener y enviar nota de voz' : 'Grabar nota de voz'} disabled={uploading} className={recording ? 'recording-button' : ''} onClick={toggleVoiceRecording}><Mic size={18}/></button><button className="send" type="submit" disabled={!draft.trim() || sending} aria-label="Enviar"><Send size={17}/></button></form>
