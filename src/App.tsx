@@ -27,6 +27,7 @@ type ChatMessage = {
   attachment_signed_url?: string | null
 }
 type SearchUser = { id: string; username: string; display_name: string }
+type GroupMember = { user_id: string; display_name: string; username: string; role: 'admin' | 'member'; joined_at: string }
 type VoxlyNotification = { id: string; conversation_id: string; title: string; body: string; created_at: string; read: boolean }
 
 const nav = [
@@ -134,6 +135,11 @@ export default function App() {
   const [groupTitle, setGroupTitle] = useState('')
   const [selectedGroupMembers, setSelectedGroupMembers] = useState<SearchUser[]>([])
   const [creatingGroup, setCreatingGroup] = useState(false)
+  const [groupManageConversation, setGroupManageConversation] = useState<Conversation | null>(null)
+  const [groupMembers, setGroupMembers] = useState<GroupMember[]>([])
+  const [loadingGroupMembers, setLoadingGroupMembers] = useState(false)
+  const [groupAddMode, setGroupAddMode] = useState(false)
+  const [addingGroupMembers, setAddingGroupMembers] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const recorderRef = useRef<MediaRecorder | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
@@ -229,7 +235,7 @@ export default function App() {
   }, [session?.user.id, selected?.conversation_id])
 
   useEffect(() => {
-    if (!supabase || !session || (!newChatMode && !groupCreateMode) || searchTerm.trim().length < 2) {
+    if (!supabase || !session || (!newChatMode && !groupCreateMode && !groupAddMode) || searchTerm.trim().length < 2) {
       setSearchResults([])
       return
     }
@@ -244,7 +250,7 @@ export default function App() {
       active = false
       window.clearTimeout(timer)
     }
-  }, [searchTerm, newChatMode, groupCreateMode, session?.user.id])
+  }, [searchTerm, newChatMode, groupCreateMode, groupAddMode, session?.user.id])
 
   useEffect(() => {
     if (!supabase || !session || !selected) {
@@ -318,6 +324,47 @@ export default function App() {
     setNewChatMode(false)
     setSearchTerm('')
     setSearchResults([])
+  }
+
+  async function openGroupManagement(chat: Conversation) {
+    setGroupManageConversation(chat); setGroupAddMode(false); setSelectedGroupMembers([])
+    setSearchTerm(''); setSearchResults([]); setError(''); setLoadingGroupMembers(true)
+    if (!supabase) return
+    const { data, error: membersError } = await supabase.rpc('list_voxly_group_members', { target_conversation: chat.conversation_id })
+    if (membersError) setError('No se pudieron cargar los integrantes: ' + membersError.message)
+    else setGroupMembers((data || []) as GroupMember[])
+    setLoadingGroupMembers(false)
+  }
+
+  async function refreshGroupMembers() {
+    if (!supabase || !groupManageConversation) return
+    const { data, error: membersError } = await supabase.rpc('list_voxly_group_members', { target_conversation: groupManageConversation.conversation_id })
+    if (membersError) setError('No se pudo actualizar la lista: ' + membersError.message)
+    else setGroupMembers((data || []) as GroupMember[])
+  }
+
+  async function addGroupMembers() {
+    if (!supabase || !groupManageConversation || !selectedGroupMembers.length || addingGroupMembers) return
+    setAddingGroupMembers(true); setError('')
+    const { error: addError } = await supabase.rpc('add_voxly_group_members', {
+      target_conversation: groupManageConversation.conversation_id,
+      member_ids: selectedGroupMembers.map(member => member.id)
+    })
+    if (addError) setError('No se pudieron agregar los participantes: ' + addError.message)
+    else { setSelectedGroupMembers([]); setSearchTerm(''); setSearchResults([]); setGroupAddMode(false); await refreshGroupMembers() }
+    setAddingGroupMembers(false)
+  }
+
+  async function removeGroupMember(userId: string) {
+    if (!supabase || !groupManageConversation || !session) return
+    const isSelf = userId === session.user.id
+    if (!window.confirm(isSelf ? '¿Quieres salir de este grupo?' : '¿Quieres retirar a esta persona del grupo?')) return
+    const { error: removeError } = await supabase.rpc('remove_voxly_group_member', {
+      target_conversation: groupManageConversation.conversation_id, target_user: userId
+    })
+    if (removeError) { setError('No se pudo completar la acción: ' + removeError.message); return }
+    if (isSelf) { setGroupManageConversation(null); setGroupMembers([]); setSection('Grupos'); await loadConversations() }
+    else await refreshGroupMembers()
   }
 
   async function createGroup() {
@@ -523,20 +570,33 @@ export default function App() {
           {!conversations.some(chat => chat.kind === 'direct' && chat.other_user_id) && <div className="contacts-empty"><Phone size={30}/><b>Aún no tienes contactos para llamar</b><p>Primero inicia una conversación individual desde Contactos.</p><button onClick={() => setSection('Contactos')}>Ver contactos</button></div>}
         </div>
       </section> : section === 'Grupos' ? <section className="groups-page">
-        <div className="groups-toolbar">
-          <div><h2>Grupos de Voxly</h2><p>Crea espacios para conversar con varias personas.</p></div>
-          <button className="contacts-add" onClick={() => {setGroupCreateMode(value => !value);setGroupTitle('');setSelectedGroupMembers([]);setSearchTerm('');setSearchResults([]);setError('')}}><Plus size={16}/>{groupCreateMode ? 'Cancelar' : 'Crear grupo'}</button>
-        </div>
-        {groupCreateMode ? <div className="group-create-card">
-          <label className="group-field"><span>Nombre del grupo</span><input value={groupTitle} onChange={e => setGroupTitle(e.target.value)} placeholder="Ej. Amigos, escuela, equipo..." maxLength={60}/></label>
-          <label className="group-field"><span>Buscar personas para agregar</span><div className="group-search"><Search size={16}/><input value={searchTerm} onChange={e => setSearchTerm(e.target.value)} placeholder="Escribe un nombre o @usuario..."/></div></label>
-          <div className="group-selected"><b>Participantes seleccionados ({selectedGroupMembers.length})</b>{selectedGroupMembers.length ? selectedGroupMembers.map(member => <button type="button" key={member.id} onClick={() => setSelectedGroupMembers(current => current.filter(item => item.id !== member.id))}>{member.display_name} ×</button>) : <small>Selecciona al menos una persona.</small>}</div>
-          <div className="group-search-results">{searchTerm.trim().length < 2 ? <p>Escribe al menos 2 caracteres para buscar personas.</p> : searchResults.length ? searchResults.map(user => {const chosen=selectedGroupMembers.some(member=>member.id===user.id);return <button type="button" key={user.id} className={chosen?'group-user chosen':'group-user'} onClick={() => setSelectedGroupMembers(current => chosen ? current.filter(item=>item.id!==user.id) : [...current,user])}><div className="avatar violet">{initials(user.display_name)}</div><span><b>{user.display_name}</b><small>@{user.username}</small></span><span className="group-check">{chosen?'✓':'+'}</span></button>}) : <p>No se encontraron personas.</p>}</div>
-          <button className="group-create-submit" disabled={creatingGroup || !groupTitle.trim() || selectedGroupMembers.length===0} onClick={createGroup}>{creatingGroup ? 'Creando grupo...' : 'Crear grupo y abrir chat'}</button>
-        </div> : <div className="groups-grid">
-          {conversations.filter(chat => chat.kind === 'group').map(chat => <article className="group-card" key={chat.conversation_id}><div className="group-card-icon"><UsersRound size={22}/></div><div className="group-card-info"><b>{chat.other_display_name}</b><small>{chat.last_message || 'Grupo creado. ¡Envía el primer mensaje!'}</small><time>{shortTime(chat.last_message_at || chat.updated_at)}</time></div><button onClick={() => {setSelected(chat);setSection('Mensajes')}}><MessageCircle size={16}/> Abrir</button></article>)}
-          {!conversations.some(chat => chat.kind === 'group') && <div className="contacts-empty"><UsersRound size={32}/><b>Aún no tienes grupos</b><p>Crea un grupo, agrega personas y comienza a conversar en un mismo espacio.</p><button onClick={() => setGroupCreateMode(true)}><Plus size={16}/> Crear primer grupo</button></div>}
-        </div>}
+        {groupManageConversation ? <>
+          <div className="groups-toolbar"><div><h2>Administrar grupo</h2><p>{groupManageConversation.other_display_name}</p></div><button className="contacts-add" onClick={() => {setGroupManageConversation(null);setGroupMembers([]);setGroupAddMode(false);setSearchTerm('')}}>Volver a grupos</button></div>
+          <div className="group-manage-card">
+            <div className="group-manage-heading"><div><h3>Participantes</h3><small>{groupMembers.length} de 50 integrantes</small></div><button className="contacts-add" onClick={() => {setGroupAddMode(value => !value);setSelectedGroupMembers([]);setSearchTerm('');setSearchResults([])}}><Plus size={15}/>{groupAddMode ? 'Cancelar' : 'Agregar personas'}</button></div>
+            {loadingGroupMembers ? <p className="group-loading">Cargando integrantes...</p> : <div className="group-member-list">
+              {groupMembers.map(member => <div className="group-member-row" key={member.user_id}><div className="avatar violet">{initials(member.display_name)}</div><div className="group-member-info"><b>{member.display_name}{member.user_id === session?.user.id ? ' (Tú)' : ''}</b><small>@{member.username}</small></div><span className={member.role === 'admin' ? 'group-role admin' : 'group-role'}>{member.role === 'admin' ? 'Administrador' : 'Miembro'}</span>{(groupMembers.find(item => item.user_id === session?.user.id)?.role === 'admin' && member.user_id !== session?.user.id) && <button className="group-remove" onClick={() => removeGroupMember(member.user_id)}>Retirar</button>}</div>)}
+            </div>}
+            {groupAddMode && <div className="group-add-panel"><label className="group-field"><span>Buscar personas</span><div className="group-search"><Search size={16}/><input value={searchTerm} onChange={e => setSearchTerm(e.target.value)} placeholder="Nombre o @usuario..."/></div></label>
+              <div className="group-selected"><b>Seleccionados ({selectedGroupMembers.length})</b>{selectedGroupMembers.map(member => <button type="button" key={member.id} onClick={() => setSelectedGroupMembers(current => current.filter(item => item.id !== member.id))}>{member.display_name} ×</button>)}</div>
+              <div className="group-search-results">{searchTerm.trim().length < 2 ? <p>Escribe al menos 2 caracteres para buscar.</p> : searchResults.filter(user => !groupMembers.some(member => member.user_id === user.id)).length ? searchResults.filter(user => !groupMembers.some(member => member.user_id === user.id)).map(user => {const chosen=selectedGroupMembers.some(member=>member.id===user.id);return <button type="button" key={user.id} className={chosen?'group-user chosen':'group-user'} onClick={() => setSelectedGroupMembers(current => chosen ? current.filter(item=>item.id!==user.id) : [...current,user])}><div className="avatar violet">{initials(user.display_name)}</div><span><b>{user.display_name}</b><small>@{user.username}</small></span><span className="group-check">{chosen?'✓':'+'}</span></button>}) : <p>No hay personas nuevas en los resultados.</p>}</div>
+              <button className="group-create-submit" disabled={addingGroupMembers || !selectedGroupMembers.length} onClick={addGroupMembers}>{addingGroupMembers ? 'Agregando...' : 'Agregar al grupo'}</button>
+            </div>}
+            <button className="group-leave" onClick={() => removeGroupMember(session!.user.id)}>Salir del grupo</button>
+          </div>
+        </> : <>
+          <div className="groups-toolbar"><div><h2>Grupos de Voxly</h2><p>Crea espacios para conversar con varias personas.</p></div><button className="contacts-add" onClick={() => {setGroupCreateMode(value => !value);setGroupTitle('');setSelectedGroupMembers([]);setSearchTerm('');setSearchResults([]);setError('')}}><Plus size={16}/>{groupCreateMode ? 'Cancelar' : 'Crear grupo'}</button></div>
+          {groupCreateMode ? <div className="group-create-card">
+            <label className="group-field"><span>Nombre del grupo</span><input value={groupTitle} onChange={e => setGroupTitle(e.target.value)} placeholder="Ej. Amigos, escuela, equipo..." maxLength={60}/></label>
+            <label className="group-field"><span>Buscar personas para agregar</span><div className="group-search"><Search size={16}/><input value={searchTerm} onChange={e => setSearchTerm(e.target.value)} placeholder="Escribe un nombre o @usuario..."/></div></label>
+            <div className="group-selected"><b>Participantes seleccionados ({selectedGroupMembers.length})</b>{selectedGroupMembers.length ? selectedGroupMembers.map(member => <button type="button" key={member.id} onClick={() => setSelectedGroupMembers(current => current.filter(item => item.id !== member.id))}>{member.display_name} ×</button>) : <small>Selecciona al menos una persona.</small>}</div>
+            <div className="group-search-results">{searchTerm.trim().length < 2 ? <p>Escribe al menos 2 caracteres para buscar personas.</p> : searchResults.length ? searchResults.map(user => {const chosen=selectedGroupMembers.some(member=>member.id===user.id);return <button type="button" key={user.id} className={chosen?'group-user chosen':'group-user'} onClick={() => setSelectedGroupMembers(current => chosen ? current.filter(item=>item.id!==user.id) : [...current,user])}><div className="avatar violet">{initials(user.display_name)}</div><span><b>{user.display_name}</b><small>@{user.username}</small></span><span className="group-check">{chosen?'✓':'+'}</span></button>}) : <p>No se encontraron personas.</p>}</div>
+            <button className="group-create-submit" disabled={creatingGroup || !groupTitle.trim() || selectedGroupMembers.length===0} onClick={createGroup}>{creatingGroup ? 'Creando grupo...' : 'Crear grupo y abrir chat'}</button>
+          </div> : <div className="groups-grid">
+            {conversations.filter(chat => chat.kind === 'group').map(chat => <article className="group-card" key={chat.conversation_id}><div className="group-card-icon"><UsersRound size={22}/></div><div className="group-card-info"><b>{chat.other_display_name}</b><small>{chat.last_message || 'Grupo creado. ¡Envía el primer mensaje!'}</small><time>{shortTime(chat.last_message_at || chat.updated_at)}</time></div><button onClick={() => openGroupManagement(chat)}><Users size={15}/> Administrar</button><button onClick={() => {setSelected(chat);setSection('Mensajes')}}><MessageCircle size={16}/> Abrir</button></article>)}
+            {!conversations.some(chat => chat.kind === 'group') && <div className="contacts-empty"><UsersRound size={32}/><b>Aún no tienes grupos</b><p>Crea un grupo, agrega personas y comienza a conversar en un mismo espacio.</p><button onClick={() => setGroupCreateMode(true)}><Plus size={16}/> Crear primer grupo</button></div>}
+          </div>}
+        </>}
       </section> : section === 'Contactos' ? <section className="contacts-page">
         <div className="contacts-toolbar">
           <div><h2>Tus contactos</h2><p>Personas con las que ya tienes una conversación en Voxly.</p></div>
