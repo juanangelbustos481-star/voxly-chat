@@ -85,7 +85,7 @@ language sql
 stable
 security definer
 set search_path = ''
-as $
+as $$
   select exists (
     select 1
     from public.conversation_members cm
@@ -93,7 +93,7 @@ as $
       and cm.user_id = (select auth.uid())
       and cm.role = 'admin'
   );
-$;
+$$;
 
 revoke all on function public.is_conversation_admin(uuid) from public;
 grant execute on function public.is_conversation_admin(uuid) to authenticated;
