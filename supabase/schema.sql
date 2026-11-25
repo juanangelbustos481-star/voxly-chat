@@ -79,6 +79,25 @@ $$;
 revoke all on function public.is_conversation_member(uuid) from public;
 grant execute on function public.is_conversation_member(uuid) to authenticated;
 
+create or replace function public.is_conversation_admin(target_conversation uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = ''
+as $
+  select exists (
+    select 1
+    from public.conversation_members cm
+    where cm.conversation_id = target_conversation
+      and cm.user_id = (select auth.uid())
+      and cm.role = 'admin'
+  );
+$;
+
+revoke all on function public.is_conversation_admin(uuid) from public;
+grant execute on function public.is_conversation_admin(uuid) to authenticated;
+
 -- Crear perfil automáticamente al registrarse un usuario.
 create or replace function public.handle_new_user()
 returns trigger
@@ -171,23 +190,13 @@ create policy "members_insert_creator_or_admin" on public.conversation_members
           and c.created_by = (select auth.uid())
       )
     )
-    or exists (
-      select 1 from public.conversation_members own_member
-      where own_member.conversation_id = conversation_members.conversation_id
-        and own_member.user_id = (select auth.uid())
-        and own_member.role = 'admin'
-    )
+    or public.is_conversation_admin(conversation_members.conversation_id)
   );
 drop policy if exists "members_delete_self_or_admin" on public.conversation_members;
 create policy "members_delete_self_or_admin" on public.conversation_members
   for delete to authenticated using (
     user_id = (select auth.uid())
-    or exists (
-      select 1 from public.conversation_members own_member
-      where own_member.conversation_id = conversation_id
-        and own_member.user_id = (select auth.uid())
-        and own_member.role = 'admin'
-    )
+    or public.is_conversation_admin(conversation_id)
   );
 
 -- Mensajes: únicamente integrantes pueden leerlos; solo el remitente crea/edita/elimina.
