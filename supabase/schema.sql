@@ -165,7 +165,7 @@ create policy "members_insert_self_or_admin" on public.conversation_members
     user_id = (select auth.uid())
     or exists (
       select 1 from public.conversation_members own_member
-      where own_member.conversation_id = conversation_id
+      where own_member.conversation_id = conversation_members.conversation_id
         and own_member.user_id = (select auth.uid())
         and own_member.role = 'admin'
     )
