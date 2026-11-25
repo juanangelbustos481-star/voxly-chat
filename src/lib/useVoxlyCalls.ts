@@ -105,7 +105,12 @@ export function useVoxlyCalls(client: SupabaseClient | null, session: Session | 
   }, [])
 
   useEffect(() => {
-    if (!client || !session) return
+    if (!client || !session) {
+      setCall(null)
+      setIncomingCall(null)
+      closeMedia()
+      return
+    }
     const userId = session.user.id
     const channel = client.channel('voxly-calls-' + userId)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'voxly_call_sessions' }, payload => {
