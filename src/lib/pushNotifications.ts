@@ -1,10 +1,11 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 
-function decodeVapidKey(value: string): Uint8Array {
+function decodeVapidKey(value: string): ArrayBuffer {
   const padding = '='.repeat((4 - value.length % 4) % 4)
   const base64 = (value + padding).replace(/-/g, '+').replace(/_/g, '/')
   const raw = window.atob(base64)
-  return Uint8Array.from([...raw].map(character => character.charCodeAt(0)))
+  const bytes = Uint8Array.from([...raw].map(character => character.charCodeAt(0)))
+  return bytes.buffer as ArrayBuffer
 }
 
 export async function enableVoxlyPush(client: SupabaseClient, userId: string): Promise<void> {
@@ -25,7 +26,7 @@ export async function enableVoxlyPush(client: SupabaseClient, userId: string): P
   if (!subscription) {
     subscription = await registration.pushManager.subscribe({
       userVisibleOnly: true,
-      applicationServerKey: decodeVapidKey(publicKey) as BufferSource
+      applicationServerKey: decodeVapidKey(publicKey)
     })
   }
   const json = subscription.toJSON()
