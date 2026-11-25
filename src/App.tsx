@@ -245,6 +245,32 @@ export default function App() {
   }, [session?.user.id])
 
   useEffect(() => {
+    if (!supabase || !session) { setProfile(null); setProfileAvatar(''); setOnlineUserIds([]); return }
+    let active = true
+    supabase.from('profiles').select('id, username, display_name, avatar_url, bio').eq('id', session.user.id).maybeSingle().then(({data, error: profileError}) => {
+      if (!active) return
+      if (profileError) { setError('No se pudo cargar tu perfil: ' + profileError.message); return }
+      const row = data as UserProfile | null
+      if (row) { setProfile(row); setProfileName(row.display_name || ''); setProfileUsername(row.username || ''); setProfileBio(row.bio || ''); setProfileAvatar(row.avatar_url || '') }
+    })
+    return () => { active = false }
+  }, [session?.user.id])
+
+  useEffect(() => {
+    if (!supabase || !session) return
+    const presence = supabase.channel('voxly-presence', { config: { presence: { key: session.user.id } } })
+      .on('presence', { event: 'sync' }, () => {
+        const state = presence.presenceState<{ user_id: string }>()
+        const ids = Object.values(state).flat().map(item => item.user_id)
+        setOnlineUserIds(Array.from(new Set(ids)))
+      })
+      .subscribe(async status => {
+        if (status === 'SUBSCRIBED') await presence.track({ user_id: session.user.id, online_at: new Date().toISOString() })
+      })
+    return () => { void supabase!.removeChannel(presence) }
+  }, [session?.user.id])
+
+  useEffect(() => {
     if (!supabase || !session) {
       setNotifications([])
       return
@@ -724,7 +750,7 @@ export default function App() {
   if (authLoading) return <main className="auth-screen"><div className="auth-loading"><div className="brand-icon">V</div><p>Preparando tu espacio Voxly...</p></div></main>
   if (!session) return <AuthScreen />
 
-  const displayName = session.user.user_metadata?.display_name || session.user.email?.split('@')[0] || 'Tu perfil'
+  const displayName = profile?.display_name || session.user.user_metadata?.display_name || session.user.email?.split('@')[0] || 'Tu perfil'
   const initial = initials(displayName)
   const callPeerName = voxlyCalls.call
     ? conversations.find(chat => chat.conversation_id === voxlyCalls.call?.conversation_id)?.other_display_name || 'Contacto Voxly'
@@ -740,13 +766,13 @@ export default function App() {
   return <main className="shell">
     <aside className={`sidebar ${menuOpen ? 'open' : ''}`}>
       <div className="brand"><div className="brand-icon">V</div><div><b>voxly</b><small>CONNECT WITHOUT LIMITS</small></div><button className="close-menu" onClick={() => setMenuOpen(false)}>×</button></div>
-      <div className="account"><div className="avatar user">{initial}</div><div><b>{displayName}</b><small>Cuenta conectada</small></div><i className="online"/></div>
+      <button type="button" className="account account-button" onClick={() => setSection('Mi perfil')}><div className="avatar user">{profileAvatar ? <img src={profileAvatar} alt="Foto de perfil"/> : initial}</div><div><b>{displayName}</b><small>@{profile?.username || 'configura tu usuario'}</small></div><i className="online"/></button>
       <p className="overline">ESPACIO DE TRABAJO</p>
       <nav>{nav.map(({label, icon: Icon}) => <button key={label} onClick={() => {setSection(label);setMenuOpen(false)}} className={section === label ? 'nav active' : 'nav'}><Icon size={18}/>{label}{label === 'Mensajes' && conversations.length > 0 && <em>{conversations.length}</em>}</button>)}</nav>
       <div className="side-bottom"><div className="promo"><Sparkles size={17}/><b>Tu mundo, conectado</b><p>Todo lo que necesitas para comunicarte, en un solo lugar.</p></div><button className="nav"><Settings size={18}/>Configuración</button><button className="nav signout" onClick={signOut}><LogOut size={18}/>Cerrar sesión</button><small className="privacy"><ShieldCheck size={14}/> Privacidad primero</small></div>
     </aside>
     <section className="main">
-      <header className="topbar"><button className="menu-button" onClick={() => setMenuOpen(true)}>☰</button><div><small className="overline">TU ESPACIO PERSONAL</small><h1>{section}</h1></div><div className="top-right"><span className="connection"><i/> Cuenta conectada</span><div className="notification-wrap"><button className="bell" aria-label="Notificaciones" aria-expanded={notificationsOpen} onClick={() => setNotificationsOpen(value => !value)}><Bell size={19}/>{notifications.some(item => !item.read) && <span className="notification-count">{notifications.filter(item => !item.read).length > 9 ? '9+' : notifications.filter(item => !item.read).length}</span>}</button>{notificationsOpen && <div className="notification-panel"><div className="notification-heading"><div><b>Notificaciones</b><small>{notifications.filter(item => !item.read).length} sin leer</small></div><button type="button" onClick={() => setNotifications(current => current.map(item => ({...item, read:true})))}>Marcar leídas</button></div><button type="button" className="notification-permission" onClick={togglePushNotifications} disabled={pushBusy}>{pushBusy ? 'Configurando notificaciones…' : pushEnabled ? 'Desactivar notificaciones push en este dispositivo' : 'Activar notificaciones aunque Voxly esté cerrado'}</button>{notifications.length ? <div className="notification-items">{notifications.map(item => <button type="button" key={item.id} className={item.read ? 'notification-item' : 'notification-item unread'} onClick={() => { const chat = conversations.find(row => row.conversation_id === item.conversation_id); if (chat) setSelected(chat); setSection('Mensajes'); setNotifications(current => current.map(note => note.id === item.id ? {...note,read:true} : note)); setNotificationsOpen(false) }}><span className="notification-dot"/><span className="notification-copy"><b>{item.title}</b><span>{item.body}</span><small>{shortTime(item.created_at)}</small></span></button>)}</div> : <p className="notification-empty">Todavía no tienes notificaciones.</p>}</div>}</div><div className="avatar user small">{initial}</div></div></header>
+      <header className="topbar"><button className="menu-button" onClick={() => setMenuOpen(true)}>☰</button><div><small className="overline">TU ESPACIO PERSONAL</small><h1>{section}</h1></div><div className="top-right"><span className="connection"><i/> Cuenta conectada</span><div className="notification-wrap"><button className="bell" aria-label="Notificaciones" aria-expanded={notificationsOpen} onClick={() => setNotificationsOpen(value => !value)}><Bell size={19}/>{notifications.some(item => !item.read) && <span className="notification-count">{notifications.filter(item => !item.read).length > 9 ? '9+' : notifications.filter(item => !item.read).length}</span>}</button>{notificationsOpen && <div className="notification-panel"><div className="notification-heading"><div><b>Notificaciones</b><small>{notifications.filter(item => !item.read).length} sin leer</small></div><button type="button" onClick={() => setNotifications(current => current.map(item => ({...item, read:true})))}>Marcar leídas</button></div><button type="button" className="notification-permission" onClick={togglePushNotifications} disabled={pushBusy}>{pushBusy ? 'Configurando notificaciones…' : pushEnabled ? 'Desactivar notificaciones push en este dispositivo' : 'Activar notificaciones aunque Voxly esté cerrado'}</button>{notifications.length ? <div className="notification-items">{notifications.map(item => <button type="button" key={item.id} className={item.read ? 'notification-item' : 'notification-item unread'} onClick={() => { const chat = conversations.find(row => row.conversation_id === item.conversation_id); if (chat) setSelected(chat); setSection('Mensajes'); setNotifications(current => current.map(note => note.id === item.id ? {...note,read:true} : note)); setNotificationsOpen(false) }}><span className="notification-dot"/><span className="notification-copy"><b>{item.title}</b><span>{item.body}</span><small>{shortTime(item.created_at)}</small></span></button>)}</div> : <p className="notification-empty">Todavía no tienes notificaciones.</p>}</div>}</div><button type="button" className="avatar user small top-avatar" onClick={() => setSection('Mi perfil')} aria-label="Abrir mi perfil">{profileAvatar ? <img src={profileAvatar} alt="Foto de perfil"/> : initial}</button></div></header>
       {section === 'Guardados' ? <section className="saved-page"><div className="saved-heading"><div><h2>Mensajes guardados</h2><p>Tu colección personal de mensajes importantes.</p></div><span>{savedMessages.length} guardados</span></div>{savedMessages.length ? <div className="saved-list">{savedMessages.map(item => {const message=Array.isArray(item.messages)?item.messages[0]:item.messages;const chat=message?conversations.find(row=>row.conversation_id===message.conversation_id):null;return message ? <article className="saved-card" key={item.id}><div className="saved-card-icon"><Bookmark size={17}/></div><div className="saved-card-copy"><b>{chat?.other_display_name || 'Conversación'}</b><p>{message.deleted_at ? 'Este mensaje fue eliminado' : message.content || (message.message_type==='image'?'📷 Imagen':message.message_type==='audio'?'🎙️ Nota de voz':'Archivo adjunto')}</p><small>{shortTime(message.created_at)}</small></div><button type="button" onClick={() => openSavedMessage(item)}>Abrir chat</button><button type="button" className="saved-remove" onClick={() => toggleSavedMessage(message)}>Quitar</button></article> : null})}</div> : <div className="saved-empty"><Bookmark size={34}/><b>Aún no guardas mensajes</b><p>Usa el icono de marcador en cualquier mensaje para guardarlo aquí.</p></div>}</section> : section === 'Llamadas' ? <section className="calls-page">
         <div className="calls-intro"><div className="calls-intro-icon"><Phone size={25}/></div><div><h2>Llamadas de Voxly</h2><p>Comunícate por voz o video con tus contactos.</p></div></div>
         <div className="calls-notice"><ShieldCheck size={17}/><span>Las llamadas usan WebRTC y requieren permiso para acceder al micrófono o cámara. Mantén Voxly abierto durante la llamada.</span></div>
