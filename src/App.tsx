@@ -35,7 +35,7 @@ type PinnedMessage = { id: string; conversation_id: string; message_id: string; 
 type SavedMessage = { id: string; message_id: string; created_at: string; messages: ChatMessage | ChatMessage[] }
 type SearchUser = { id: string; username: string; display_name: string }
 type UserProfile = { id: string; username: string | null; display_name: string; avatar_url: string | null; bio: string | null }
-type PublicProfile = { id: string; avatar_url: string | null; bio: string | null }
+type PublicProfile = { id: string; username: string | null; display_name: string; avatar_url: string | null; bio: string | null }
 type GroupMember = { user_id: string; display_name: string; username: string; role: 'admin' | 'member'; joined_at: string }
 type VoxlyNotification = { id: string; conversation_id: string; title: string; body: string; created_at: string; read: boolean }
 
@@ -143,6 +143,9 @@ export default function App() {
   const [profileSaving, setProfileSaving] = useState(false)
   const [onlineUserIds, setOnlineUserIds] = useState<string[]>([])
   const [publicProfiles, setPublicProfiles] = useState<Record<string, PublicProfile>>({})
+  const [profileView, setProfileView] = useState<PublicProfile | null>(null)
+  const [profileViewChat, setProfileViewChat] = useState<Conversation | null>(null)
+  const [profileViewLoading, setProfileViewLoading] = useState(false)
   const avatarInputRef = useRef<HTMLInputElement>(null)
   const [menuOpen, setMenuOpen] = useState(false)
   const [newChatMode, setNewChatMode] = useState(false)
@@ -194,6 +197,20 @@ export default function App() {
     }).catch(() => { if (active) setPushEnabled(false) })
     return () => { active = false }
   }, [session?.user.id])
+
+  async function openPublicProfile(chat: Conversation) {
+    if (!supabase || !chat.other_user_id) return
+    setProfileViewChat(chat)
+    setProfileViewLoading(true)
+    setProfileView(null)
+    const { data, error: viewError } = await supabase.from('profiles')
+      .select('id, username, display_name, avatar_url, bio')
+      .eq('id', chat.other_user_id).maybeSingle()
+    if (viewError) setError('No se pudo abrir el perfil: ' + viewError.message)
+    else if (data) setProfileView(data as PublicProfile)
+    else setError('No se encontró el perfil de esta persona.')
+    setProfileViewLoading(false)
+  }
 
   async function saveProfile(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -274,7 +291,7 @@ export default function App() {
     const ids = Array.from(new Set(conversations.map(chat => chat.other_user_id).filter((id): id is string => Boolean(id))))
     if (!ids.length) { setPublicProfiles({}); return }
     let active = true
-    supabase.from('profiles').select('id, avatar_url, bio').in('id', ids).then(({data}) => {
+    supabase.from('profiles').select('id, username, display_name, avatar_url, bio').in('id', ids).then(({data}) => {
       if (!active || !data) return
       setPublicProfiles(Object.fromEntries((data as PublicProfile[]).map(item => [item.id, item])))
     })
@@ -882,8 +899,8 @@ export default function App() {
         <label className="contacts-search"><Search size={17}/><input value={contactsQuery} onChange={e => setContactsQuery(e.target.value)} placeholder="Buscar por nombre o usuario..."/></label>
         <div className="contacts-grid">
           {conversations.filter(chat => chat.kind === 'direct' && (chat.other_display_name.toLowerCase().includes(contactsQuery.toLowerCase()) || chat.other_username.toLowerCase().includes(contactsQuery.toLowerCase()))).map(chat => <article className="contact-card" key={chat.conversation_id}>
-            <div className="avatar violet contact-avatar">{publicProfiles[chat.other_user_id || '']?.avatar_url ? <img src={publicProfiles[chat.other_user_id || ''].avatar_url!} alt=""/> : initials(chat.other_display_name)}</div>
-            <div className="contact-details"><b>{chat.other_display_name}</b><small>@{chat.other_username}</small><span className="contact-presence"><i className={chat.other_user_id && onlineUserIds.includes(chat.other_user_id) ? 'online-dot' : 'offline-dot'}/>{chat.other_user_id && onlineUserIds.includes(chat.other_user_id) ? 'En línea' : 'Desconectado'}</span><span>{chat.last_message || 'Todavía no hay mensajes'}</span></div>
+            <button type="button" className="avatar violet contact-avatar contact-profile-trigger" onClick={() => openPublicProfile(chat)} aria-label={'Ver perfil de ' + chat.other_display_name}>{publicProfiles[chat.other_user_id || '']?.avatar_url ? <img src={publicProfiles[chat.other_user_id || ''].avatar_url!} alt=""/> : initials(chat.other_display_name)}</button>
+            <div className="contact-details"><button type="button" className="contact-name-trigger" onClick={() => openPublicProfile(chat)}>{chat.other_display_name}</button><small>@{chat.other_username}</small><span className="contact-presence"><i className={chat.other_user_id && onlineUserIds.includes(chat.other_user_id) ? 'online-dot' : 'offline-dot'}/>{chat.other_user_id && onlineUserIds.includes(chat.other_user_id) ? 'En línea' : 'Desconectado'}</span><span>{chat.last_message || 'Todavía no hay mensajes'}</span></div>
             <button onClick={() => {setSelected(chat);setSection('Mensajes')}}><MessageCircle size={16}/> Mensaje</button>
           </article>)}
           {!conversations.some(chat => chat.kind === 'direct' && (chat.other_display_name.toLowerCase().includes(contactsQuery.toLowerCase()) || chat.other_username.toLowerCase().includes(contactsQuery.toLowerCase()))) && <div className="contacts-empty"><Users size={30}/><b>{contactsQuery ? 'No hay resultados' : 'Aún no tienes contactos'}</b><p>{contactsQuery ? 'Prueba con otro nombre o usuario.' : 'Busca personas en Voxly para iniciar una conversación. Tus chats aparecerán aquí.'}</p><button onClick={() => {setSection('Mensajes');setNewChatMode(true);setSearchTerm('')}}><Plus size={16}/> Encontrar personas</button></div>}
@@ -915,6 +932,7 @@ export default function App() {
       </div> : <div className="placeholder"><div className="placeholder-icon">{section === 'Llamadas' ? <Phone/> : <Bot/>}</div><h2>{section}</h2><p>Esta sección se implementará en las siguientes etapas.</p><span><Sparkles size={14}/> Próximamente en Voxly</span></div>}
       {voxlyCalls.callError && <div className="app-error call-error" role="alert"><span>{voxlyCalls.callError}</span><button onClick={voxlyCalls.clearCallError}>×</button></div>}
       {error && <div className="app-error" role="alert"><span>{error}</span><button onClick={() => setError('')}>×</button></div>}
+      {profileViewChat && <div className="public-profile-backdrop" role="presentation" onClick={() => {setProfileView(null);setProfileViewChat(null)}}><section className="public-profile-modal" role="dialog" aria-modal="true" aria-label="Perfil público" onClick={event => event.stopPropagation()}><button type="button" className="public-profile-close" onClick={() => {setProfileView(null);setProfileViewChat(null)}} aria-label="Cerrar perfil">×</button>{profileViewLoading ? <div className="public-profile-loading">Cargando perfil...</div> : profileView ? <><div className="public-profile-cover"><div className="public-profile-avatar">{profileView.avatar_url ? <img src={profileView.avatar_url} alt={'Foto de ' + profileView.display_name}/> : initials(profileView.display_name)}</div><span className={onlineUserIds.includes(profileView.id) ? 'public-status is-online' : 'public-status'}><i/>{onlineUserIds.includes(profileView.id) ? 'En línea' : 'Desconectado'}</span></div><div className="public-profile-info"><h2>{profileView.display_name}</h2><p className="public-profile-username">@{profileView.username || profileViewChat.other_username}</p><p className="public-profile-bio">{profileView.bio?.trim() || 'Esta persona todavía no ha agregado una descripción.'}</p><button type="button" className="profile-save" onClick={() => {setSelected(profileViewChat);setSection('Mensajes');setProfileView(null);setProfileViewChat(null)}}><MessageCircle size={16}/> Enviar mensaje</button></div></> : <p className="public-profile-loading">No se pudo cargar este perfil.</p>}</section></div>}
       <CallOverlay call={voxlyCalls.call} incomingCall={voxlyCalls.incomingCall} localStream={voxlyCalls.localStream} remoteStream={voxlyCalls.remoteStream} muted={voxlyCalls.muted} cameraOff={voxlyCalls.cameraOff} peerName={callPeerName} onAccept={voxlyCalls.acceptCall} onReject={voxlyCalls.rejectCall} onEnd={voxlyCalls.endCall} onMute={voxlyCalls.toggleMute} onCamera={voxlyCalls.toggleCamera}/>
     </section>
   </main>
