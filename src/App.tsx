@@ -179,7 +179,7 @@ export default function App() {
         setPushEnabled(false)
         setError('Notificaciones push desactivadas en este dispositivo.')
       } else {
-        await enableVoxlyPush(supabase, session.user.id)
+        await enableVoxlyPush(supabase)
         setPushEnabled(true)
         setError('¡Listo! Este dispositivo recibirá avisos push cuando llegue un mensaje.')
       }
