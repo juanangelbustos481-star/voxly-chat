@@ -54,3 +54,7 @@
 .message-image{display:block;max-width:min(280px,55vw);max-height:300px;object-fit:contain;border-radius:10px}
 .message-file{display:inline-flex;align-items:center;gap:7px;color:#d9c7ff;text-decoration:none;font-size:11px;font-weight:600;overflow-wrap:anywhere}
 .message-file:hover{text-decoration:underline}
+
+
+/* Notas de voz */
+.audio-message{display:grid;gap:8px;min-width:min(250px,60vw)}.audio-message>span{font-size:10px;font-weight:700;color:#e7ddff}.audio-message audio{width:100%;max-width:290px;height:36px;filter:invert(.88) hue-rotate(220deg);}.recording-button{background:#8d3349!important;color:#fff!important;animation:voxly-record-pulse 1.2s ease-in-out infinite}.recording-hint{color:#ff9daf!important}@keyframes voxly-record-pulse{50%{box-shadow:0 0 0 6px #e84b6b25}}
