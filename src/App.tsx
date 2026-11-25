@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import type { Session } from '@supabase/supabase-js'
-import { Reply, Pencil, Trash2, Check, X, Bot, Image, LogOut, MessageCircle, Mic, MoreVertical, Paperclip, Phone, Plus, Search, Send, Settings, ShieldCheck, Sparkles, Users, UsersRound, Video, Bell, LockKeyhole, Mail, UserRound, Eye, EyeOff, ArrowLeft } from 'lucide-react'
+import { Reply, Pencil, Trash2, Check, X, Bookmark, Pin, Bot, Image, LogOut, MessageCircle, Mic, MoreVertical, Paperclip, Phone, Plus, Search, Send, Settings, ShieldCheck, Sparkles, Users, UsersRound, Video, Bell, LockKeyhole, Mail, UserRound, Eye, EyeOff, ArrowLeft } from 'lucide-react'
 import { isSupabaseConfigured, supabase } from './lib/supabase'
 import { useVoxlyCalls } from './lib/useVoxlyCalls'
 import CallOverlay from './lib/CallOverlay'
@@ -31,13 +31,15 @@ type ChatMessage = {
   deleted_at?: string | null
 }
 type MessageReaction = { id: string; message_id: string; user_id: string; emoji: string }
+type PinnedMessage = { id: string; conversation_id: string; message_id: string; pinned_by: string; created_at: string }
+type SavedMessage = { id: string; message_id: string; created_at: string; messages: ChatMessage | ChatMessage[] }
 type SearchUser = { id: string; username: string; display_name: string }
 type GroupMember = { user_id: string; display_name: string; username: string; role: 'admin' | 'member'; joined_at: string }
 type VoxlyNotification = { id: string; conversation_id: string; title: string; body: string; created_at: string; read: boolean }
 
 const nav = [
   { label: 'Mensajes', icon: MessageCircle }, { label: 'Contactos', icon: Users },
-  { label: 'Grupos', icon: UsersRound }, { label: 'Llamadas', icon: Phone }, { label: 'Voxly AI', icon: Bot }
+  { label: 'Grupos', icon: UsersRound }, { label: 'Guardados', icon: Bookmark }, { label: 'Llamadas', icon: Phone }, { label: 'Voxly AI', icon: Bot }
 ]
 
 function shortTime(value?: string | null) {
@@ -128,6 +130,9 @@ export default function App() {
   const [editDraft, setEditDraft] = useState('')
   const [messageActionBusy, setMessageActionBusy] = useState<string | null>(null)
   const [messageReactions, setMessageReactions] = useState<MessageReaction[]>([])
+  const [pinnedMessages, setPinnedMessages] = useState<PinnedMessage[]>([])
+  const [savedMessages, setSavedMessages] = useState<SavedMessage[]>([])
+  const [savingMessageId, setSavingMessageId] = useState<string | null>(null)
   const [menuOpen, setMenuOpen] = useState(false)
   const [newChatMode, setNewChatMode] = useState(false)
   const [searchTerm, setSearchTerm] = useState('')
@@ -306,6 +311,11 @@ export default function App() {
   }, [searchTerm, newChatMode, groupCreateMode, groupAddMode, session?.user.id])
 
   useEffect(() => {
+    if (!supabase || !session) { setSavedMessages([]); return }
+    void refreshSavedMessages()
+  }, [session?.user.id])
+
+  useEffect(() => {
     if (!supabase || !session || !selected) {
       setMessages([])
       return
@@ -313,6 +323,7 @@ export default function App() {
     let active = true
     setLoadingMessages(true)
     setMessages([])
+    void refreshPinnedMessages(selected.conversation_id)
     supabase.from('messages').select('id, conversation_id, sender_id, content, message_type, attachment_url, reply_to_message_id, created_at, edited_at, deleted_at')
       .eq('conversation_id', selected.conversation_id)
       .order('created_at', { ascending: true })
@@ -359,6 +370,9 @@ export default function App() {
         const changed = payload.new as ChatMessage
         setMessages(current => current.map(message => message.id === changed.id ? { ...message, ...changed } : message))
       })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'conversation_pins', filter: 'conversation_id=eq.' + selected.conversation_id }, () => {
+        void refreshPinnedMessages(selected.conversation_id)
+      })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'message_reactions' }, () => {
         void refreshMessageReactions(selected.conversation_id)
       })
@@ -369,6 +383,52 @@ export default function App() {
       supabase!.removeChannel(channel)
     }
   }, [selected?.conversation_id, session?.user.id])
+
+  async function refreshPinnedMessages(conversationId: string) {
+    if (!supabase) return
+    const { data, error: pinError } = await supabase.from('conversation_pins').select('id, conversation_id, message_id, pinned_by, created_at').eq('conversation_id', conversationId).order('created_at', { ascending: false })
+    if (!pinError && data) setPinnedMessages(data as PinnedMessage[])
+  }
+
+  async function refreshSavedMessages() {
+    if (!supabase || !session) return
+    const { data, error: savedError } = await supabase.from('message_bookmarks').select('id, message_id, created_at, messages!inner(id, conversation_id, sender_id, content, message_type, created_at, deleted_at)').eq('user_id', session.user.id).order('created_at', { ascending: false })
+    if (savedError) setError('No se pudieron cargar los mensajes guardados: ' + savedError.message)
+    else setSavedMessages((data || []) as unknown as SavedMessage[])
+  }
+
+  async function toggleSavedMessage(message: ChatMessage) {
+    if (!supabase || !session || savingMessageId) return
+    setSavingMessageId(message.id)
+    const existing = savedMessages.find(item => item.message_id === message.id)
+    const result = existing
+      ? await supabase.from('message_bookmarks').delete().eq('id', existing.id)
+      : await supabase.from('message_bookmarks').insert({ message_id: message.id, user_id: session.user.id })
+    if (result.error) setError('No se pudo actualizar el mensaje guardado: ' + result.error.message)
+    else await refreshSavedMessages()
+    setSavingMessageId(null)
+  }
+
+  async function togglePinnedMessage(message: ChatMessage) {
+    if (!supabase || !session || savingMessageId || message.deleted_at) return
+    setSavingMessageId(message.id)
+    const existing = pinnedMessages.find(item => item.message_id === message.id)
+    const result = existing
+      ? await supabase.from('conversation_pins').delete().eq('id', existing.id)
+      : await supabase.from('conversation_pins').insert({ conversation_id: message.conversation_id, message_id: message.id, pinned_by: session.user.id })
+    if (result.error) setError('No se pudo actualizar el mensaje fijado: ' + result.error.message)
+    else if (selected) await refreshPinnedMessages(selected.conversation_id)
+    setSavingMessageId(null)
+  }
+
+  async function openSavedMessage(item: SavedMessage) {
+    const message = Array.isArray(item.messages) ? item.messages[0] : item.messages
+    if (!message) return
+    const chat = conversations.find(row => row.conversation_id === message.conversation_id)
+    if (!chat) { setError('Esta conversación ya no está disponible.'); return }
+    setSelected(chat)
+    setSection('Mensajes')
+  }
 
   async function refreshMessageReactions(conversationId: string) {
     if (!supabase) return
@@ -687,7 +747,7 @@ export default function App() {
     </aside>
     <section className="main">
       <header className="topbar"><button className="menu-button" onClick={() => setMenuOpen(true)}>☰</button><div><small className="overline">TU ESPACIO PERSONAL</small><h1>{section}</h1></div><div className="top-right"><span className="connection"><i/> Cuenta conectada</span><div className="notification-wrap"><button className="bell" aria-label="Notificaciones" aria-expanded={notificationsOpen} onClick={() => setNotificationsOpen(value => !value)}><Bell size={19}/>{notifications.some(item => !item.read) && <span className="notification-count">{notifications.filter(item => !item.read).length > 9 ? '9+' : notifications.filter(item => !item.read).length}</span>}</button>{notificationsOpen && <div className="notification-panel"><div className="notification-heading"><div><b>Notificaciones</b><small>{notifications.filter(item => !item.read).length} sin leer</small></div><button type="button" onClick={() => setNotifications(current => current.map(item => ({...item, read:true})))}>Marcar leídas</button></div><button type="button" className="notification-permission" onClick={togglePushNotifications} disabled={pushBusy}>{pushBusy ? 'Configurando notificaciones…' : pushEnabled ? 'Desactivar notificaciones push en este dispositivo' : 'Activar notificaciones aunque Voxly esté cerrado'}</button>{notifications.length ? <div className="notification-items">{notifications.map(item => <button type="button" key={item.id} className={item.read ? 'notification-item' : 'notification-item unread'} onClick={() => { const chat = conversations.find(row => row.conversation_id === item.conversation_id); if (chat) setSelected(chat); setSection('Mensajes'); setNotifications(current => current.map(note => note.id === item.id ? {...note,read:true} : note)); setNotificationsOpen(false) }}><span className="notification-dot"/><span className="notification-copy"><b>{item.title}</b><span>{item.body}</span><small>{shortTime(item.created_at)}</small></span></button>)}</div> : <p className="notification-empty">Todavía no tienes notificaciones.</p>}</div>}</div><div className="avatar user small">{initial}</div></div></header>
-      {section === 'Llamadas' ? <section className="calls-page">
+      {section === 'Guardados' ? <section className="saved-page"><div className="saved-heading"><div><h2>Mensajes guardados</h2><p>Tu colección personal de mensajes importantes.</p></div><span>{savedMessages.length} guardados</span></div>{savedMessages.length ? <div className="saved-list">{savedMessages.map(item => {const message=Array.isArray(item.messages)?item.messages[0]:item.messages;const chat=message?conversations.find(row=>row.conversation_id===message.conversation_id):null;return message ? <article className="saved-card" key={item.id}><div className="saved-card-icon"><Bookmark size={17}/></div><div className="saved-card-copy"><b>{chat?.other_display_name || 'Conversación'}</b><p>{message.deleted_at ? 'Este mensaje fue eliminado' : message.content || (message.message_type==='image'?'📷 Imagen':message.message_type==='audio'?'🎙️ Nota de voz':'Archivo adjunto')}</p><small>{shortTime(message.created_at)}</small></div><button type="button" onClick={() => openSavedMessage(item)}>Abrir chat</button><button type="button" className="saved-remove" onClick={() => toggleSavedMessage(message)}>Quitar</button></article> : null})}</div> : <div className="saved-empty"><Bookmark size={34}/><b>Aún no guardas mensajes</b><p>Usa el icono de marcador en cualquier mensaje para guardarlo aquí.</p></div>}</section> : section === 'Llamadas' ? <section className="calls-page">
         <div className="calls-intro"><div className="calls-intro-icon"><Phone size={25}/></div><div><h2>Llamadas de Voxly</h2><p>Comunícate por voz o video con tus contactos.</p></div></div>
         <div className="calls-notice"><ShieldCheck size={17}/><span>Las llamadas usan WebRTC y requieren permiso para acceder al micrófono o cámara. Mantén Voxly abierto durante la llamada.</span></div>
         <h3>Iniciar una llamada</h3>
@@ -755,9 +815,10 @@ export default function App() {
         <section className="conversation">
           {selected ? <>
             <div className="conversation-head"><button className="mobile-back" onClick={() => setSelected(null)} aria-label="Volver a conversaciones"><ArrowLeft size={18}/></button><div className="avatar violet">{initials(selected.other_display_name)}</div><div className="person"><b>{selected.other_display_name}</b><small>@{selected.other_username}</small></div><div className="actions"><button aria-label="Llamada de voz" title={selected.kind === 'direct' ? 'Llamada de voz' : 'Las llamadas grupales aún no están disponibles'} disabled={selected.kind !== 'direct' || !!voxlyCalls.call || !!voxlyCalls.incomingCall} onClick={() => voxlyCalls.startCall(selected.conversation_id, selected.other_user_id, 'audio')}><Phone size={18}/></button><button aria-label="Videollamada" title={selected.kind === 'direct' ? 'Videollamada' : 'Las llamadas grupales aún no están disponibles'} disabled={selected.kind !== 'direct' || !!voxlyCalls.call || !!voxlyCalls.incomingCall} onClick={() => voxlyCalls.startCall(selected.conversation_id, selected.other_user_id, 'video')}><Video size={19}/></button><button aria-label="Más opciones"><MoreVertical size={19}/></button></div></div>
+            {pinnedMessages.length > 0 && <div className="pinned-strip"><div className="pinned-strip-title"><Pin size={14}/><b>Mensajes fijados</b><small>{pinnedMessages.length}</small></div><div className="pinned-strip-items">{pinnedMessages.map(pin => {const pinned = messages.find(item => item.id === pin.message_id);return pinned ? <button type="button" key={pin.id} onClick={() => document.getElementById('message-' + pinned.id)?.scrollIntoView({behavior:'smooth',block:'center'})}><span>{pinned.deleted_at ? 'Mensaje eliminado' : pinned.content || (pinned.message_type === 'image' ? '📷 Imagen' : 'Archivo o nota de voz')}</span><small>{shortTime(pinned.created_at)}</small></button> : null})}</div></div>}
             <div className="messages">
               <div className="day">MENSAJES DE VOXLY</div>
-              {loadingMessages ? <p className="empty-messages">Cargando mensajes...</p> : messages.length ? messages.map(message => <div key={message.id} className={message.sender_id === session.user.id ? 'message outgoing' : 'message incoming'}><div className="bubble">{message.deleted_at ? <span className="deleted-message">Este mensaje fue eliminado</span> : editingMessageId === message.id ? <div className="message-edit-box"><textarea value={editDraft} maxLength={5000} onChange={event => setEditDraft(event.target.value)} aria-label="Editar mensaje"/><div><button type="button" disabled={!editDraft.trim() || messageActionBusy === message.id} onClick={() => saveEditedMessage(message)}><Check size={14}/> Guardar</button><button type="button" onClick={() => {setEditingMessageId(null);setEditDraft('')}}><X size={14}/> Cancelar</button></div></div> : <>{message.reply_to_message_id && <div className="reply-quote"><b>Respuesta a un mensaje</b><span>{messages.find(item => item.id === message.reply_to_message_id)?.deleted_at ? 'Mensaje eliminado' : messages.find(item => item.id === message.reply_to_message_id)?.content || 'Mensaje original no disponible'}</span></div>}{message.message_type === 'audio' && message.attachment_signed_url ? <div className="audio-message"><span>🎙️ Nota de voz</span><audio controls preload="metadata" src={message.attachment_signed_url}>Tu navegador no puede reproducir este audio.</audio></div> : message.message_type === 'image' && message.attachment_signed_url ? <a href={message.attachment_signed_url} target="_blank" rel="noreferrer"><img className="message-image" src={message.attachment_signed_url} alt={message.content} loading="lazy"/></a> : message.attachment_signed_url ? <a className="message-file" href={message.attachment_signed_url} target="_blank" rel="noreferrer">📎 {message.content}</a> : message.attachment_url ? <span>📎 {message.content}</span> : message.content}</>}</div><div className="message-meta"><time>{shortTime(message.created_at)}</time>{message.edited_at && !message.deleted_at && <small className="edited-label">Editado</small>}{!message.deleted_at && <>{['👍', '❤️', '😂', '😮'].map(emoji => { const items = messageReactions.filter(item => item.message_id === message.id && item.emoji === emoji); const mine = items.some(item => item.user_id === session.user.id); return <button key={emoji} type="button" className={'message-reaction' + (mine ? ' selected' : '')} title={'Reaccionar con ' + emoji} aria-label={'Reaccionar con ' + emoji} onClick={() => toggleMessageReaction(message.id, emoji)}>{emoji}{items.length > 0 && <small>{items.length}</small>}</button> })}<button type="button" className="message-reply" title="Responder" aria-label="Responder a este mensaje" onClick={() => setReplyTo(message)}><Reply size={13}/></button>{message.sender_id === session.user.id && message.message_type === 'text' && <button type="button" className="message-action" title="Editar mensaje" aria-label="Editar mensaje" onClick={() => beginEditMessage(message)}><Pencil size={13}/></button>}{message.sender_id === session.user.id && <button type="button" className="message-action danger" title="Eliminar mensaje" aria-label="Eliminar mensaje" disabled={messageActionBusy === message.id} onClick={() => deleteMessage(message)}><Trash2 size={13}/></button>}</>}</div></div>) : <div className="empty-messages"><MessageCircle size={27}/><b>Esta conversación está lista</b><span>Envía el primer mensaje para comenzar.</span></div>}
+              {loadingMessages ? <p className="empty-messages">Cargando mensajes...</p> : messages.length ? messages.map(message => <div id={'message-' + message.id} key={message.id} className={message.sender_id === session.user.id ? 'message outgoing' : 'message incoming'}><div className="bubble">{message.deleted_at ? <span className="deleted-message">Este mensaje fue eliminado</span> : editingMessageId === message.id ? <div className="message-edit-box"><textarea value={editDraft} maxLength={5000} onChange={event => setEditDraft(event.target.value)} aria-label="Editar mensaje"/><div><button type="button" disabled={!editDraft.trim() || messageActionBusy === message.id} onClick={() => saveEditedMessage(message)}><Check size={14}/> Guardar</button><button type="button" onClick={() => {setEditingMessageId(null);setEditDraft('')}}><X size={14}/> Cancelar</button></div></div> : <>{message.reply_to_message_id && <div className="reply-quote"><b>Respuesta a un mensaje</b><span>{messages.find(item => item.id === message.reply_to_message_id)?.deleted_at ? 'Mensaje eliminado' : messages.find(item => item.id === message.reply_to_message_id)?.content || 'Mensaje original no disponible'}</span></div>}{message.message_type === 'audio' && message.attachment_signed_url ? <div className="audio-message"><span>🎙️ Nota de voz</span><audio controls preload="metadata" src={message.attachment_signed_url}>Tu navegador no puede reproducir este audio.</audio></div> : message.message_type === 'image' && message.attachment_signed_url ? <a href={message.attachment_signed_url} target="_blank" rel="noreferrer"><img className="message-image" src={message.attachment_signed_url} alt={message.content} loading="lazy"/></a> : message.attachment_signed_url ? <a className="message-file" href={message.attachment_signed_url} target="_blank" rel="noreferrer">📎 {message.content}</a> : message.attachment_url ? <span>📎 {message.content}</span> : message.content}</>}</div><div className="message-meta"><time>{shortTime(message.created_at)}</time>{message.edited_at && !message.deleted_at && <small className="edited-label">Editado</small>}{!message.deleted_at && <>{['👍', '❤️', '😂', '😮'].map(emoji => { const items = messageReactions.filter(item => item.message_id === message.id && item.emoji === emoji); const mine = items.some(item => item.user_id === session.user.id); return <button key={emoji} type="button" className={'message-reaction' + (mine ? ' selected' : '')} title={'Reaccionar con ' + emoji} aria-label={'Reaccionar con ' + emoji} onClick={() => toggleMessageReaction(message.id, emoji)}>{emoji}{items.length > 0 && <small>{items.length}</small>}</button> })}<button type="button" className="message-reply" title="Responder" aria-label="Responder a este mensaje" onClick={() => setReplyTo(message)}><Reply size={13}/></button><button type="button" className={'message-action bookmark-action' + (savedMessages.some(item => item.message_id === message.id) ? ' active' : '')} title={savedMessages.some(item => item.message_id === message.id) ? 'Quitar de guardados' : 'Guardar mensaje'} aria-label="Guardar mensaje" disabled={savingMessageId === message.id} onClick={() => toggleSavedMessage(message)}><Bookmark size={13}/></button><button type="button" className={'message-action pin-action' + (pinnedMessages.some(item => item.message_id === message.id) ? ' active' : '')} title={pinnedMessages.some(item => item.message_id === message.id) ? 'Desfijar mensaje' : 'Fijar mensaje'} aria-label="Fijar mensaje" disabled={savingMessageId === message.id} onClick={() => togglePinnedMessage(message)}><Pin size={13}/></button>{message.sender_id === session.user.id && message.message_type === 'text' && <button type="button" className="message-action" title="Editar mensaje" aria-label="Editar mensaje" onClick={() => beginEditMessage(message)}><Pencil size={13}/></button>}{message.sender_id === session.user.id && <button type="button" className="message-action danger" title="Eliminar mensaje" aria-label="Eliminar mensaje" disabled={messageActionBusy === message.id} onClick={() => deleteMessage(message)}><Trash2 size={13}/></button>}</>}</div></div>) : <div className="empty-messages"><MessageCircle size={27}/><b>Esta conversación está lista</b><span>Envía el primer mensaje para comenzar.</span></div>}
             </div>
             {replyTo && <div className="reply-composer"><div><b>Respondiendo a {replyTo.sender_id === session.user.id ? 'ti' : selected.other_display_name}</b><span>{replyTo.content}</span></div><button type="button" onClick={() => setReplyTo(null)} aria-label="Cancelar respuesta">×</button></div>}
             <form className="composer" onSubmit={sendMessage}><input ref={fileInputRef} className="hidden-file-input" type="file" accept="image/*,audio/*,video/*,.pdf,.doc,.docx,.txt,.xlsx,.pptx" onChange={e => uploadAttachment(e.target.files?.[0])}/><button type="button" aria-label="Adjuntar archivo" title="Adjuntar archivo (máx. 15 MB)" disabled={uploading} onClick={() => { if (fileInputRef.current) { fileInputRef.current.accept = 'image/*,audio/*,video/*,.pdf,.doc,.docx,.txt,.xlsx,.pptx'; fileInputRef.current.click() } }}><Paperclip size={18}/></button><input value={draft} onChange={e => setDraft(e.target.value)} placeholder={`Escribe un mensaje a ${selected.other_display_name}...`}/><button type="button" aria-label="Enviar fotografía" title="Enviar fotografía" disabled={uploading} onClick={() => { if (fileInputRef.current) { fileInputRef.current.accept = 'image/*'; fileInputRef.current.click() } }}><Image size={18}/></button><button type="button" aria-label={recording ? 'Detener grabación' : 'Grabar nota de voz'} title={recording ? 'Detener y enviar nota de voz' : 'Grabar nota de voz'} disabled={uploading} className={recording ? 'recording-button' : ''} onClick={toggleVoiceRecording}><Mic size={18}/></button><button className="send" type="submit" disabled={!draft.trim() || sending} aria-label="Enviar"><Send size={17}/></button></form>
