@@ -89,3 +89,13 @@ exception when undefined_object then
   raise notice 'Habilita Realtime para las tablas de llamadas desde Supabase.';
 end;
 $$;
+
+
+-- Permisos mínimos: el cliente solo puede consultar, crear señales y cambiar el estado.
+revoke all on public.voxly_call_sessions from anon, public;
+grant select, insert on public.voxly_call_sessions to authenticated;
+revoke update on public.voxly_call_sessions from authenticated;
+grant update (status) on public.voxly_call_sessions to authenticated;
+
+revoke all on public.voxly_call_signals from anon, public;
+grant select, insert on public.voxly_call_signals to authenticated;
