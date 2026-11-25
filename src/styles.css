@@ -209,3 +209,18 @@
 .message-reaction:hover{transform:translateY(-1px);background:#3a3155;border-color:#8062bd}
 .message-reaction.selected{border-color:#a783f2;background:#7049b944;box-shadow:0 0 0 1px #a783f244}
 .message-reaction small{font-size:9px;color:#d7c6ff}
+
+
+/* Edición y eliminación de mensajes */
+.message-action{width:22px;height:22px;display:grid;place-items:center;border:1px solid #514078;border-radius:7px;background:#7548cf20;color:#cbb5ff;opacity:.75;cursor:pointer}
+.message-action:hover{opacity:1;background:#7548cf55}
+.message-action.danger{border-color:#74404c;background:#b83c5522;color:#ff9aaa}
+.message-action:disabled{opacity:.4;cursor:wait}
+.edited-label{font-size:8px;color:#a99bc8;font-style:italic}
+.deleted-message{color:#aaa5bd;font-size:11px;font-style:italic}
+.message-edit-box{display:grid;gap:8px;min-width:min(260px,65vw)}
+.message-edit-box textarea{width:100%;min-height:66px;resize:vertical;padding:9px;border:1px solid #6b55a0;border-radius:8px;background:#11121e;color:#f4efff;font:inherit;font-size:11px;outline:none}
+.message-edit-box>div{display:flex;justify-content:flex-end;gap:7px}
+.message-edit-box button{display:inline-flex;align-items:center;gap:5px;padding:6px 9px;border:1px solid #514078;border-radius:7px;background:#7548cf30;color:#e1d4ff;font-size:9px;cursor:pointer}
+.message-edit-box button:disabled{opacity:.45;cursor:wait}
+@media(max-width:550px){.message-action{opacity:1}}
