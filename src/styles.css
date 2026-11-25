@@ -16,3 +16,34 @@
 .auth-switch{text-align:center;color:#9693aa;font-size:10px;margin:19px 0 17px}.auth-switch button{border:0;background:transparent;color:#bd9aff;font-weight:700;padding:0 3px}.auth-security{display:flex;align-items:center;justify-content:center;gap:7px;border-top:1px solid #2a293c;padding-top:16px;color:#7d7b96;font-size:9px}.auth-footer{color:#5e5c75;font-size:8px;letter-spacing:2px;margin:19px 0 0}.auth-loading{display:grid;justify-items:center;gap:12px;color:#aaa4c2;font-size:12px}.auth-loading .brand-icon{width:52px;height:52px}
 .signout{margin-top:4px;color:#a29bb9}.signout:hover{color:#ffb1bd;background:#8b34401f}
 @media(max-width:500px){.auth-card{padding:28px 21px 23px;border-radius:19px}.auth-card h1{font-size:23px}}
+
+
+/* Mensajería real y búsqueda de usuarios */
+.real-chat-list,.search-users{display:flex;flex-direction:column;overflow-y:auto;min-height:0}
+.real-chat-list{flex:1}
+.empty-list{margin:18px 16px;color:#85849f;font-size:10px;line-height:1.6;text-align:center}
+.user-result{display:flex;align-items:center;gap:10px;padding:12px 15px;border:0;border-top:1px solid #242438;background:transparent;text-align:left}
+.user-result:hover{background:#242039}
+.user-result>span{display:grid;gap:4px;flex:1;min-width:0}
+.user-result b{font-size:11px}
+.user-result small{font-size:9px;color:#9291a8}
+.user-result>svg{color:#b99bff}
+.empty-conversation,.empty-messages{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;color:#8988a0;text-align:center}
+.empty-conversation{flex:1;padding:24px}
+.empty-conversation>svg,.empty-messages>svg{color:#a98aff}
+.empty-conversation h2{font:600 20px 'Space Grotesk';color:#f3f2fb;margin:8px 0 0}
+.empty-conversation p,.empty-messages span{font-size:11px;line-height:1.6;margin:0}
+.empty-messages{flex:1;min-height:180px;font-size:11px}
+.empty-messages b{color:#d8d1ec}
+.mobile-back{display:none;border:0;background:transparent;color:#aaa}
+.app-error{position:fixed;z-index:10;right:22px;bottom:18px;max-width:min(520px,calc(100vw - 32px));display:flex;align-items:flex-start;gap:12px;padding:13px 15px;border:1px solid #a7485566;border-radius:12px;background:#281923;color:#ffbdc5;box-shadow:0 12px 40px #0008;font-size:11px;line-height:1.5}
+.app-error button{border:0;background:transparent;color:#ffbdc5;font-size:18px;line-height:14px}
+.conversation .messages{overflow-y:auto}
+@media(max-width:600px){
+  .messenger.has-selected .chat-list{display:none}
+  .messenger.has-selected .conversation{display:flex;width:100%}
+  .messenger:not(.has-selected) .conversation{display:none}
+  .mobile-back{display:grid;place-items:center;width:30px;height:32px;margin-left:-8px}
+  .conversation-head{padding:0 12px;gap:8px}
+  .actions button{width:30px}
+}
