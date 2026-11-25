@@ -8,8 +8,8 @@ self.addEventListener('push', event => {
   const title = payload.title || 'Voxly'
   const options = {
     body: payload.body || 'Tienes un mensaje nuevo.',
-    icon: '/favicon.ico',
-    badge: '/favicon.ico',
+    icon: '/voxly-icon.svg',
+    badge: '/voxly-icon.svg',
     tag: payload.tag || 'voxly-message',
     renotify: true,
     data: { url: payload.url || '/' }
