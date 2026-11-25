@@ -35,6 +35,7 @@ type PinnedMessage = { id: string; conversation_id: string; message_id: string; 
 type SavedMessage = { id: string; message_id: string; created_at: string; messages: ChatMessage | ChatMessage[] }
 type SearchUser = { id: string; username: string; display_name: string }
 type UserProfile = { id: string; username: string | null; display_name: string; avatar_url: string | null; bio: string | null }
+type PublicProfile = { id: string; avatar_url: string | null; bio: string | null }
 type GroupMember = { user_id: string; display_name: string; username: string; role: 'admin' | 'member'; joined_at: string }
 type VoxlyNotification = { id: string; conversation_id: string; title: string; body: string; created_at: string; read: boolean }
 
@@ -141,6 +142,7 @@ export default function App() {
   const [profileAvatar, setProfileAvatar] = useState('')
   const [profileSaving, setProfileSaving] = useState(false)
   const [onlineUserIds, setOnlineUserIds] = useState<string[]>([])
+  const [publicProfiles, setPublicProfiles] = useState<Record<string, PublicProfile>>({})
   const avatarInputRef = useRef<HTMLInputElement>(null)
   const [menuOpen, setMenuOpen] = useState(false)
   const [newChatMode, setNewChatMode] = useState(false)
@@ -266,6 +268,18 @@ export default function App() {
     })
     return () => listener.subscription.unsubscribe()
   }, [])
+
+  useEffect(() => {
+    if (!supabase) return
+    const ids = Array.from(new Set(conversations.map(chat => chat.other_user_id).filter((id): id is string => Boolean(id))))
+    if (!ids.length) { setPublicProfiles({}); return }
+    let active = true
+    supabase.from('profiles').select('id, avatar_url, bio').in('id', ids).then(({data}) => {
+      if (!active || !data) return
+      setPublicProfiles(Object.fromEntries((data as PublicProfile[]).map(item => [item.id, item])))
+    })
+    return () => { active = false }
+  }, [conversations])
 
   async function loadConversations() {
     if (!supabase) return
@@ -868,7 +882,7 @@ export default function App() {
         <label className="contacts-search"><Search size={17}/><input value={contactsQuery} onChange={e => setContactsQuery(e.target.value)} placeholder="Buscar por nombre o usuario..."/></label>
         <div className="contacts-grid">
           {conversations.filter(chat => chat.kind === 'direct' && (chat.other_display_name.toLowerCase().includes(contactsQuery.toLowerCase()) || chat.other_username.toLowerCase().includes(contactsQuery.toLowerCase()))).map(chat => <article className="contact-card" key={chat.conversation_id}>
-            <div className="avatar violet contact-avatar">{initials(chat.other_display_name)}</div>
+            <div className="avatar violet contact-avatar">{publicProfiles[chat.other_user_id || '']?.avatar_url ? <img src={publicProfiles[chat.other_user_id || ''].avatar_url!} alt=""/> : initials(chat.other_display_name)}</div>
             <div className="contact-details"><b>{chat.other_display_name}</b><small>@{chat.other_username}</small><span className="contact-presence"><i className={chat.other_user_id && onlineUserIds.includes(chat.other_user_id) ? 'online-dot' : 'offline-dot'}/>{chat.other_user_id && onlineUserIds.includes(chat.other_user_id) ? 'En línea' : 'Desconectado'}</span><span>{chat.last_message || 'Todavía no hay mensajes'}</span></div>
             <button onClick={() => {setSelected(chat);setSection('Mensajes')}}><MessageCircle size={16}/> Mensaje</button>
           </article>)}
