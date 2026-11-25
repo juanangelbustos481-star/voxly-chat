@@ -28,6 +28,7 @@ type ChatMessage = {
   attachment_signed_url?: string | null
   reply_to_message_id?: string | null
 }
+type MessageReaction = { id: string; message_id: string; user_id: string; emoji: string }
 type SearchUser = { id: string; username: string; display_name: string }
 type GroupMember = { user_id: string; display_name: string; username: string; role: 'admin' | 'member'; joined_at: string }
 type VoxlyNotification = { id: string; conversation_id: string; title: string; body: string; created_at: string; read: boolean }
@@ -121,6 +122,7 @@ export default function App() {
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [draft, setDraft] = useState('')
   const [replyTo, setReplyTo] = useState<ChatMessage | null>(null)
+  const [messageReactions, setMessageReactions] = useState<MessageReaction[]>([])
   const [menuOpen, setMenuOpen] = useState(false)
   const [newChatMode, setNewChatMode] = useState(false)
   const [searchTerm, setSearchTerm] = useState('')
@@ -320,7 +322,11 @@ export default function App() {
             const { data: signed } = await supabase!.storage.from('voxly-attachments').createSignedUrl(message.attachment_url, 3600)
             return { ...message, attachment_signed_url: signed?.signedUrl || null }
           }))
-          if (active) setMessages(hydrated)
+          if (active) {
+            setMessages(hydrated)
+            const { data: reactionRows, error: reactionError } = await supabase!.from('message_reactions').select('id, message_id, user_id, emoji').in('message_id', rows.map(message => message.id))
+            if (!reactionError && reactionRows) setMessageReactions(reactionRows as MessageReaction[])
+          }
         }
         setLoadingMessages(false)
       })
@@ -341,6 +347,9 @@ export default function App() {
           loadConversations()
         })()
       })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'message_reactions' }, () => {
+        void refreshMessageReactions(selected.conversation_id)
+      })
       .subscribe()
 
     return () => {
@@ -348,6 +357,25 @@ export default function App() {
       supabase!.removeChannel(channel)
     }
   }, [selected?.conversation_id, session?.user.id])
+
+  async function refreshMessageReactions(conversationId: string) {
+    if (!supabase) return
+    const { data: messageRows } = await supabase.from('messages').select('id').eq('conversation_id', conversationId)
+    const ids = (messageRows || []).map(row => row.id)
+    if (!ids.length) { setMessageReactions([]); return }
+    const { data, error: reactionError } = await supabase.from('message_reactions').select('id, message_id, user_id, emoji').in('message_id', ids)
+    if (!reactionError && data) setMessageReactions(data as MessageReaction[])
+  }
+
+  async function toggleMessageReaction(messageId: string, emoji: string) {
+    if (!supabase || !session) return
+    const existing = messageReactions.find(item => item.message_id === messageId && item.user_id === session.user.id && item.emoji === emoji)
+    const result = existing
+      ? await supabase.from('message_reactions').delete().eq('id', existing.id)
+      : await supabase.from('message_reactions').insert({ message_id: messageId, user_id: session.user.id, emoji })
+    if (result.error) setError('No se pudo guardar la reacción: ' + result.error.message)
+    else if (selected) await refreshMessageReactions(selected.conversation_id)
+  }
 
   async function startConversation(user: SearchUser) {
     if (!supabase) return
@@ -675,7 +703,7 @@ export default function App() {
             <div className="conversation-head"><button className="mobile-back" onClick={() => setSelected(null)} aria-label="Volver a conversaciones"><ArrowLeft size={18}/></button><div className="avatar violet">{initials(selected.other_display_name)}</div><div className="person"><b>{selected.other_display_name}</b><small>@{selected.other_username}</small></div><div className="actions"><button aria-label="Llamada de voz" title={selected.kind === 'direct' ? 'Llamada de voz' : 'Las llamadas grupales aún no están disponibles'} disabled={selected.kind !== 'direct' || !!voxlyCalls.call || !!voxlyCalls.incomingCall} onClick={() => voxlyCalls.startCall(selected.conversation_id, selected.other_user_id, 'audio')}><Phone size={18}/></button><button aria-label="Videollamada" title={selected.kind === 'direct' ? 'Videollamada' : 'Las llamadas grupales aún no están disponibles'} disabled={selected.kind !== 'direct' || !!voxlyCalls.call || !!voxlyCalls.incomingCall} onClick={() => voxlyCalls.startCall(selected.conversation_id, selected.other_user_id, 'video')}><Video size={19}/></button><button aria-label="Más opciones"><MoreVertical size={19}/></button></div></div>
             <div className="messages">
               <div className="day">MENSAJES DE VOXLY</div>
-              {loadingMessages ? <p className="empty-messages">Cargando mensajes...</p> : messages.length ? messages.map(message => <div key={message.id} className={message.sender_id === session.user.id ? 'message outgoing' : 'message incoming'}><div className="bubble">{message.reply_to_message_id && <div className="reply-quote"><b>Respuesta a un mensaje</b><span>{messages.find(item => item.id === message.reply_to_message_id)?.content || 'Mensaje original no disponible'}</span></div>}{message.message_type === 'audio' && message.attachment_signed_url ? <div className="audio-message"><span>🎙️ Nota de voz</span><audio controls preload="metadata" src={message.attachment_signed_url}>Tu navegador no puede reproducir este audio.</audio></div> : message.message_type === 'image' && message.attachment_signed_url ? <a href={message.attachment_signed_url} target="_blank" rel="noreferrer"><img className="message-image" src={message.attachment_signed_url} alt={message.content} loading="lazy"/></a> : message.attachment_signed_url ? <a className="message-file" href={message.attachment_signed_url} target="_blank" rel="noreferrer">📎 {message.content}</a> : message.attachment_url ? <span>📎 {message.content}</span> : message.content}</div><div className="message-meta"><time>{shortTime(message.created_at)}</time><button type="button" className="message-reply" title="Responder" aria-label="Responder a este mensaje" onClick={() => setReplyTo(message)}><Reply size={13}/></button></div></div>) : <div className="empty-messages"><MessageCircle size={27}/><b>Esta conversación está lista</b><span>Envía el primer mensaje para comenzar.</span></div>}
+              {loadingMessages ? <p className="empty-messages">Cargando mensajes...</p> : messages.length ? messages.map(message => <div key={message.id} className={message.sender_id === session.user.id ? 'message outgoing' : 'message incoming'}><div className="bubble">{message.reply_to_message_id && <div className="reply-quote"><b>Respuesta a un mensaje</b><span>{messages.find(item => item.id === message.reply_to_message_id)?.content || 'Mensaje original no disponible'}</span></div>}{message.message_type === 'audio' && message.attachment_signed_url ? <div className="audio-message"><span>🎙️ Nota de voz</span><audio controls preload="metadata" src={message.attachment_signed_url}>Tu navegador no puede reproducir este audio.</audio></div> : message.message_type === 'image' && message.attachment_signed_url ? <a href={message.attachment_signed_url} target="_blank" rel="noreferrer"><img className="message-image" src={message.attachment_signed_url} alt={message.content} loading="lazy"/></a> : message.attachment_signed_url ? <a className="message-file" href={message.attachment_signed_url} target="_blank" rel="noreferrer">📎 {message.content}</a> : message.attachment_url ? <span>📎 {message.content}</span> : message.content}</div><div className="message-meta"><time>{shortTime(message.created_at)}</time>{['👍', '❤️', '😂', '😮'].map(emoji => { const items = messageReactions.filter(item => item.message_id === message.id && item.emoji === emoji); const mine = items.some(item => item.user_id === session.user.id); return <button key={emoji} type="button" className={'message-reaction' + (mine ? ' selected' : '')} title={'Reaccionar con ' + emoji} aria-label={'Reaccionar con ' + emoji} onClick={() => toggleMessageReaction(message.id, emoji)}>{emoji}{items.length > 0 && <small>{items.length}</small>}</button> })}<button type="button" className="message-reply" title="Responder" aria-label="Responder a este mensaje" onClick={() => setReplyTo(message)}><Reply size={13}/></button></div></div>) : <div className="empty-messages"><MessageCircle size={27}/><b>Esta conversación está lista</b><span>Envía el primer mensaje para comenzar.</span></div>}
             </div>
             {replyTo && <div className="reply-composer"><div><b>Respondiendo a {replyTo.sender_id === session.user.id ? 'ti' : selected.other_display_name}</b><span>{replyTo.content}</span></div><button type="button" onClick={() => setReplyTo(null)} aria-label="Cancelar respuesta">×</button></div>}
             <form className="composer" onSubmit={sendMessage}><input ref={fileInputRef} className="hidden-file-input" type="file" accept="image/*,audio/*,video/*,.pdf,.doc,.docx,.txt,.xlsx,.pptx" onChange={e => uploadAttachment(e.target.files?.[0])}/><button type="button" aria-label="Adjuntar archivo" title="Adjuntar archivo (máx. 15 MB)" disabled={uploading} onClick={() => { if (fileInputRef.current) { fileInputRef.current.accept = 'image/*,audio/*,video/*,.pdf,.doc,.docx,.txt,.xlsx,.pptx'; fileInputRef.current.click() } }}><Paperclip size={18}/></button><input value={draft} onChange={e => setDraft(e.target.value)} placeholder={`Escribe un mensaje a ${selected.other_display_name}...`}/><button type="button" aria-label="Enviar fotografía" title="Enviar fotografía" disabled={uploading} onClick={() => { if (fileInputRef.current) { fileInputRef.current.accept = 'image/*'; fileInputRef.current.click() } }}><Image size={18}/></button><button type="button" aria-label={recording ? 'Detener grabación' : 'Grabar nota de voz'} title={recording ? 'Detener y enviar nota de voz' : 'Grabar nota de voz'} disabled={uploading} className={recording ? 'recording-button' : ''} onClick={toggleVoiceRecording}><Mic size={18}/></button><button className="send" type="submit" disabled={!draft.trim() || sending} aria-label="Enviar"><Send size={17}/></button></form>
