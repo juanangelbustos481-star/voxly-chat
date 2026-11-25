@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import type { Session } from '@supabase/supabase-js'
-import { Bot, Image, LogOut, MessageCircle, Mic, MoreVertical, Paperclip, Phone, Plus, Search, Send, Settings, ShieldCheck, Sparkles, Users, UsersRound, Video, Bell, LockKeyhole, Mail, UserRound, Eye, EyeOff, ArrowLeft } from 'lucide-react'
+import { Reply, Bot, Image, LogOut, MessageCircle, Mic, MoreVertical, Paperclip, Phone, Plus, Search, Send, Settings, ShieldCheck, Sparkles, Users, UsersRound, Video, Bell, LockKeyhole, Mail, UserRound, Eye, EyeOff, ArrowLeft } from 'lucide-react'
 import { isSupabaseConfigured, supabase } from './lib/supabase'
 import { useVoxlyCalls } from './lib/useVoxlyCalls'
 import CallOverlay from './lib/CallOverlay'
@@ -26,6 +26,7 @@ type ChatMessage = {
   created_at: string
   attachment_url?: string | null
   attachment_signed_url?: string | null
+  reply_to_message_id?: string | null
 }
 type SearchUser = { id: string; username: string; display_name: string }
 type GroupMember = { user_id: string; display_name: string; username: string; role: 'admin' | 'member'; joined_at: string }
@@ -119,6 +120,7 @@ export default function App() {
   const [selected, setSelected] = useState<Conversation | null>(null)
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [draft, setDraft] = useState('')
+  const [replyTo, setReplyTo] = useState<ChatMessage | null>(null)
   const [menuOpen, setMenuOpen] = useState(false)
   const [newChatMode, setNewChatMode] = useState(false)
   const [searchTerm, setSearchTerm] = useState('')
@@ -304,7 +306,7 @@ export default function App() {
     let active = true
     setLoadingMessages(true)
     setMessages([])
-    supabase.from('messages').select('id, conversation_id, sender_id, content, message_type, attachment_url, created_at')
+    supabase.from('messages').select('id, conversation_id, sender_id, content, message_type, attachment_url, reply_to_message_id, created_at')
       .eq('conversation_id', selected.conversation_id)
       .is('deleted_at', null)
       .order('created_at', { ascending: true })
@@ -562,11 +564,13 @@ export default function App() {
       conversation_id: selected.conversation_id,
       sender_id: session.user.id,
       content,
-      message_type: 'text'
+      message_type: 'text',
+      reply_to_message_id: replyTo?.id || null
     })
     if (sendError) setError('No se pudo enviar el mensaje: ' + sendError.message)
     else {
       setDraft('')
+      setReplyTo(null)
       loadConversations()
     }
     setSending(false)
@@ -671,8 +675,9 @@ export default function App() {
             <div className="conversation-head"><button className="mobile-back" onClick={() => setSelected(null)} aria-label="Volver a conversaciones"><ArrowLeft size={18}/></button><div className="avatar violet">{initials(selected.other_display_name)}</div><div className="person"><b>{selected.other_display_name}</b><small>@{selected.other_username}</small></div><div className="actions"><button aria-label="Llamada de voz" title={selected.kind === 'direct' ? 'Llamada de voz' : 'Las llamadas grupales aún no están disponibles'} disabled={selected.kind !== 'direct' || !!voxlyCalls.call || !!voxlyCalls.incomingCall} onClick={() => voxlyCalls.startCall(selected.conversation_id, selected.other_user_id, 'audio')}><Phone size={18}/></button><button aria-label="Videollamada" title={selected.kind === 'direct' ? 'Videollamada' : 'Las llamadas grupales aún no están disponibles'} disabled={selected.kind !== 'direct' || !!voxlyCalls.call || !!voxlyCalls.incomingCall} onClick={() => voxlyCalls.startCall(selected.conversation_id, selected.other_user_id, 'video')}><Video size={19}/></button><button aria-label="Más opciones"><MoreVertical size={19}/></button></div></div>
             <div className="messages">
               <div className="day">MENSAJES DE VOXLY</div>
-              {loadingMessages ? <p className="empty-messages">Cargando mensajes...</p> : messages.length ? messages.map(message => <div key={message.id} className={message.sender_id === session.user.id ? 'message outgoing' : 'message incoming'}><div className="bubble">{message.message_type === 'audio' && message.attachment_signed_url ? <div className="audio-message"><span>🎙️ Nota de voz</span><audio controls preload="metadata" src={message.attachment_signed_url}>Tu navegador no puede reproducir este audio.</audio></div> : message.message_type === 'image' && message.attachment_signed_url ? <a href={message.attachment_signed_url} target="_blank" rel="noreferrer"><img className="message-image" src={message.attachment_signed_url} alt={message.content} loading="lazy"/></a> : message.attachment_signed_url ? <a className="message-file" href={message.attachment_signed_url} target="_blank" rel="noreferrer">📎 {message.content}</a> : message.attachment_url ? <span>📎 {message.content}</span> : message.content}</div><time>{shortTime(message.created_at)}</time></div>) : <div className="empty-messages"><MessageCircle size={27}/><b>Esta conversación está lista</b><span>Envía el primer mensaje para comenzar.</span></div>}
+              {loadingMessages ? <p className="empty-messages">Cargando mensajes...</p> : messages.length ? messages.map(message => <div key={message.id} className={message.sender_id === session.user.id ? 'message outgoing' : 'message incoming'}><div className="bubble">{message.reply_to_message_id && <div className="reply-quote"><b>Respuesta a un mensaje</b><span>{messages.find(item => item.id === message.reply_to_message_id)?.content || 'Mensaje original no disponible'}</span></div>}{message.message_type === 'audio' && message.attachment_signed_url ? <div className="audio-message"><span>🎙️ Nota de voz</span><audio controls preload="metadata" src={message.attachment_signed_url}>Tu navegador no puede reproducir este audio.</audio></div> : message.message_type === 'image' && message.attachment_signed_url ? <a href={message.attachment_signed_url} target="_blank" rel="noreferrer"><img className="message-image" src={message.attachment_signed_url} alt={message.content} loading="lazy"/></a> : message.attachment_signed_url ? <a className="message-file" href={message.attachment_signed_url} target="_blank" rel="noreferrer">📎 {message.content}</a> : message.attachment_url ? <span>📎 {message.content}</span> : message.content}</div><div className="message-meta"><time>{shortTime(message.created_at)}</time><button type="button" className="message-reply" title="Responder" aria-label="Responder a este mensaje" onClick={() => setReplyTo(message)}><Reply size={13}/></button></div></div>) : <div className="empty-messages"><MessageCircle size={27}/><b>Esta conversación está lista</b><span>Envía el primer mensaje para comenzar.</span></div>}
             </div>
+            {replyTo && <div className="reply-composer"><div><b>Respondiendo a {replyTo.sender_id === session.user.id ? 'ti' : selected.other_display_name}</b><span>{replyTo.content}</span></div><button type="button" onClick={() => setReplyTo(null)} aria-label="Cancelar respuesta">×</button></div>}
             <form className="composer" onSubmit={sendMessage}><input ref={fileInputRef} className="hidden-file-input" type="file" accept="image/*,audio/*,video/*,.pdf,.doc,.docx,.txt,.xlsx,.pptx" onChange={e => uploadAttachment(e.target.files?.[0])}/><button type="button" aria-label="Adjuntar archivo" title="Adjuntar archivo (máx. 15 MB)" disabled={uploading} onClick={() => { if (fileInputRef.current) { fileInputRef.current.accept = 'image/*,audio/*,video/*,.pdf,.doc,.docx,.txt,.xlsx,.pptx'; fileInputRef.current.click() } }}><Paperclip size={18}/></button><input value={draft} onChange={e => setDraft(e.target.value)} placeholder={`Escribe un mensaje a ${selected.other_display_name}...`}/><button type="button" aria-label="Enviar fotografía" title="Enviar fotografía" disabled={uploading} onClick={() => { if (fileInputRef.current) { fileInputRef.current.accept = 'image/*'; fileInputRef.current.click() } }}><Image size={18}/></button><button type="button" aria-label={recording ? 'Detener grabación' : 'Grabar nota de voz'} title={recording ? 'Detener y enviar nota de voz' : 'Grabar nota de voz'} disabled={uploading} className={recording ? 'recording-button' : ''} onClick={toggleVoiceRecording}><Mic size={18}/></button><button className="send" type="submit" disabled={!draft.trim() || sending} aria-label="Enviar"><Send size={17}/></button></form>
             <p className={recording ? 'hint recording-hint' : 'hint'}>{recording ? 'Grabando nota de voz… pulsa el micrófono para detener y enviar.' : uploading ? 'Subiendo archivo o nota de voz…' : 'Tus mensajes se guardan en Supabase y se actualizan en tiempo real.'}</p>
           </> : <div className="empty-conversation"><MessageCircle size={42}/><h2>Tu espacio de conversación</h2><p>Selecciona un chat o pulsa + para encontrar personas en Voxly.</p></div>}
