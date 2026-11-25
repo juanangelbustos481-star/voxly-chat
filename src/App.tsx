@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import type { Session } from '@supabase/supabase-js'
-import { Reply, Pencil, Trash2, Check, X, Bookmark, Pin, Bot, Image, LogOut, MessageCircle, Mic, MoreVertical, Paperclip, Phone, Plus, Search, Send, Settings, ShieldCheck, Sparkles, Users, UsersRound, Video, Bell, LockKeyhole, Mail, UserRound, Eye, EyeOff, ArrowLeft } from 'lucide-react'
+import { Reply, Pencil, Trash2, Check, X, Bookmark, Pin, Camera, Save, AtSign, CircleUserRound, Bot, Image, LogOut, MessageCircle, Mic, MoreVertical, Paperclip, Phone, Plus, Search, Send, Settings, ShieldCheck, Sparkles, Users, UsersRound, Video, Bell, LockKeyhole, Mail, UserRound, Eye, EyeOff, ArrowLeft } from 'lucide-react'
 import { isSupabaseConfigured, supabase } from './lib/supabase'
 import { useVoxlyCalls } from './lib/useVoxlyCalls'
 import CallOverlay from './lib/CallOverlay'
@@ -34,12 +34,13 @@ type MessageReaction = { id: string; message_id: string; user_id: string; emoji:
 type PinnedMessage = { id: string; conversation_id: string; message_id: string; pinned_by: string; created_at: string }
 type SavedMessage = { id: string; message_id: string; created_at: string; messages: ChatMessage | ChatMessage[] }
 type SearchUser = { id: string; username: string; display_name: string }
+type UserProfile = { id: string; username: string | null; display_name: string; avatar_url: string | null; bio: string | null }
 type GroupMember = { user_id: string; display_name: string; username: string; role: 'admin' | 'member'; joined_at: string }
 type VoxlyNotification = { id: string; conversation_id: string; title: string; body: string; created_at: string; read: boolean }
 
 const nav = [
   { label: 'Mensajes', icon: MessageCircle }, { label: 'Contactos', icon: Users },
-  { label: 'Grupos', icon: UsersRound }, { label: 'Guardados', icon: Bookmark }, { label: 'Llamadas', icon: Phone }, { label: 'Voxly AI', icon: Bot }
+  { label: 'Grupos', icon: UsersRound }, { label: 'Mi perfil', icon: CircleUserRound }, { label: 'Guardados', icon: Bookmark }, { label: 'Llamadas', icon: Phone }, { label: 'Voxly AI', icon: Bot }
 ]
 
 function shortTime(value?: string | null) {
@@ -133,6 +134,14 @@ export default function App() {
   const [pinnedMessages, setPinnedMessages] = useState<PinnedMessage[]>([])
   const [savedMessages, setSavedMessages] = useState<SavedMessage[]>([])
   const [savingMessageId, setSavingMessageId] = useState<string | null>(null)
+  const [profile, setProfile] = useState<UserProfile | null>(null)
+  const [profileName, setProfileName] = useState('')
+  const [profileUsername, setProfileUsername] = useState('')
+  const [profileBio, setProfileBio] = useState('')
+  const [profileAvatar, setProfileAvatar] = useState('')
+  const [profileSaving, setProfileSaving] = useState(false)
+  const [onlineUserIds, setOnlineUserIds] = useState<string[]>([])
+  const avatarInputRef = useRef<HTMLInputElement>(null)
   const [menuOpen, setMenuOpen] = useState(false)
   const [newChatMode, setNewChatMode] = useState(false)
   const [searchTerm, setSearchTerm] = useState('')
@@ -183,6 +192,44 @@ export default function App() {
     }).catch(() => { if (active) setPushEnabled(false) })
     return () => { active = false }
   }, [session?.user.id])
+
+  async function saveProfile(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (!supabase || !session || profileSaving) return
+    const cleanName = profileName.trim()
+    const cleanUsername = profileUsername.trim().toLowerCase().replace(/^@/, '')
+    if (cleanName.length < 2) { setError('El nombre debe tener al menos 2 caracteres.'); return }
+    if (!/^[a-z0-9_]{3,24}$/.test(cleanUsername)) { setError('El usuario debe tener entre 3 y 24 caracteres y usar solo letras, números o guion bajo.'); return }
+    setProfileSaving(true); setError('')
+    const { data, error: updateError } = await supabase.from('profiles').update({ display_name: cleanName, username: cleanUsername, bio: profileBio.trim().slice(0,160), updated_at: new Date().toISOString() }).eq('id', session.user.id).select('id, username, display_name, avatar_url, bio').single()
+    if (updateError) setError(updateError.code === '23505' ? 'Ese nombre de usuario ya está ocupado. Prueba con otro.' : 'No se pudo guardar el perfil: ' + updateError.message)
+    else {
+      const updated = data as UserProfile
+      setProfile(updated); setProfileName(updated.display_name); setProfileUsername(updated.username || ''); setProfileBio(updated.bio || '')
+      await supabase.auth.updateUser({ data: { display_name: updated.display_name } })
+      setError('Perfil actualizado correctamente.')
+    }
+    setProfileSaving(false)
+  }
+
+  async function uploadProfileAvatar(file?: File) {
+    if (!supabase || !session || !file) return
+    if (!['image/jpeg','image/png','image/webp'].includes(file.type)) { setError('La foto debe ser JPG, PNG o WEBP.'); return }
+    if (file.size > 5 * 1024 * 1024) { setError('La imagen no debe superar 5 MB.'); return }
+    setProfileSaving(true); setError('')
+    const extension = file.type === 'image/png' ? 'png' : file.type === 'image/webp' ? 'webp' : 'jpg'
+    const path = session.user.id + '/avatar-' + Date.now() + '.' + extension
+    const { error: uploadError } = await supabase.storage.from('voxly-avatars').upload(path, file, { upsert: true, contentType: file.type })
+    if (uploadError) setError('No se pudo subir la foto: ' + uploadError.message)
+    else {
+      const { data: publicData } = supabase.storage.from('voxly-avatars').getPublicUrl(path)
+      const avatarUrl = publicData.publicUrl
+      const { error: profileError } = await supabase.from('profiles').update({ avatar_url: avatarUrl }).eq('id', session.user.id)
+      if (profileError) setError('La foto se subió, pero no se pudo actualizar el perfil: ' + profileError.message)
+      else { setProfileAvatar(avatarUrl); setProfile(current => current ? {...current, avatar_url: avatarUrl} : current); setError('Foto de perfil actualizada.') }
+    }
+    setProfileSaving(false)
+  }
 
   async function togglePushNotifications() {
     if (!supabase || !session) return
