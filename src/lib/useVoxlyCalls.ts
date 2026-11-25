@@ -190,6 +190,15 @@ export function useVoxlyCalls(client: SupabaseClient | null, session: Session | 
       setLocalStream(stream)
       const peer = makePeer(row, stream)
       await peer.setRemoteDescription(new RTCSessionDescription(offer.payload as RTCSessionDescriptionInit))
+      const { data: earlyIce, error: iceError } = await client.from('voxly_call_signals')
+        .select('*').eq('call_id', row.id).eq('signal_type', 'ice')
+        .eq('sender_id', row.caller_id).order('created_at', { ascending: true })
+      if (iceError) throw iceError
+      for (const signal of (earlyIce || []) as SignalRow[]) {
+        const candidate = signal.payload as RTCIceCandidateInit
+        if (candidate?.candidate) await peer.addIceCandidate(new RTCIceCandidate(candidate))
+        handledSignalsRef.current.add(signal.id)
+      }
       for (const candidate of pendingIceRef.current.splice(0)) await peer.addIceCandidate(new RTCIceCandidate(candidate))
       const answer = await peer.createAnswer()
       await peer.setLocalDescription(answer)
