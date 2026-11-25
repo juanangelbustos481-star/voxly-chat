@@ -25,6 +25,7 @@ type ChatMessage = {
   attachment_signed_url?: string | null
 }
 type SearchUser = { id: string; username: string; display_name: string }
+type VoxlyNotification = { id: string; conversation_id: string; title: string; body: string; created_at: string; read: boolean }
 
 const nav = [
   { label: 'Mensajes', icon: MessageCircle }, { label: 'Contactos', icon: Users },
@@ -124,6 +125,8 @@ export default function App() {
   const [error, setError] = useState('')
   const [uploading, setUploading] = useState(false)
   const [recording, setRecording] = useState(false)
+  const [notifications, setNotifications] = useState<VoxlyNotification[]>([])
+  const [notificationsOpen, setNotificationsOpen] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const recorderRef = useRef<MediaRecorder | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
@@ -168,6 +171,54 @@ export default function App() {
       setMessages([])
     }
   }, [session?.user.id])
+
+  useEffect(() => {
+    if (!supabase || !session) {
+      setNotifications([])
+      return
+    }
+    const channel = supabase.channel('voxly-notifications-' + session.user.id)
+      .on('postgres_changes', {
+        event: 'INSERT',
+        schema: 'public',
+        table: 'messages'
+      }, payload => {
+        const incoming = payload.new as ChatMessage
+        if (incoming.sender_id === session.user.id) return
+        void (async () => {
+          const { data } = await supabase!.rpc('list_my_voxly_conversations')
+          const chats = (data || []) as Conversation[]
+          const chat = chats.find(item => item.conversation_id === incoming.conversation_id)
+          const senderName = chat?.other_display_name || 'Nuevo mensaje'
+          const body = incoming.message_type === 'image' ? 'Te envió una fotografía'
+            : incoming.message_type === 'audio' ? 'Te envió una nota de voz'
+            : incoming.message_type === 'file' ? 'Te envió un archivo'
+            : incoming.content
+          const notification: VoxlyNotification = {
+            id: incoming.id,
+            conversation_id: incoming.conversation_id,
+            title: senderName,
+            body,
+            created_at: incoming.created_at,
+            read: selected?.conversation_id === incoming.conversation_id && document.visibilityState === 'visible'
+          }
+          setNotifications(current => current.some(item => item.id === notification.id) ? current : [notification, ...current].slice(0, 40))
+          if (document.visibilityState === 'hidden' && 'Notification' in window && Notification.permission === 'granted') {
+            const browserNotice = new Notification('Voxly · ' + senderName, {
+              body,
+              tag: 'voxly-' + incoming.conversation_id
+            })
+            browserNotice.onclick = () => window.focus()
+          }
+          loadConversations()
+        })()
+      })
+      .subscribe()
+
+    return () => {
+      supabase!.removeChannel(channel)
+    }
+  }, [session?.user.id, selected?.conversation_id])
 
   useEffect(() => {
     if (!supabase || !session || !newChatMode || searchTerm.trim().length < 2) {
@@ -412,7 +463,7 @@ export default function App() {
       <div className="side-bottom"><div className="promo"><Sparkles size={17}/><b>Tu mundo, conectado</b><p>Todo lo que necesitas para comunicarte, en un solo lugar.</p></div><button className="nav"><Settings size={18}/>Configuración</button><button className="nav signout" onClick={signOut}><LogOut size={18}/>Cerrar sesión</button><small className="privacy"><ShieldCheck size={14}/> Privacidad primero</small></div>
     </aside>
     <section className="main">
-      <header className="topbar"><button className="menu-button" onClick={() => setMenuOpen(true)}>☰</button><div><small className="overline">TU ESPACIO PERSONAL</small><h1>{section}</h1></div><div className="top-right"><span className="connection"><i/> Cuenta conectada</span><button className="bell" aria-label="Notificaciones"><Bell size={19}/></button><div className="avatar user small">{initial}</div></div></header>
+      <header className="topbar"><button className="menu-button" onClick={() => setMenuOpen(true)}>☰</button><div><small className="overline">TU ESPACIO PERSONAL</small><h1>{section}</h1></div><div className="top-right"><span className="connection"><i/> Cuenta conectada</span><div className="notification-wrap"><button className="bell" aria-label="Notificaciones" aria-expanded={notificationsOpen} onClick={() => setNotificationsOpen(value => !value)}><Bell size={19}/>{notifications.some(item => !item.read) && <span className="notification-count">{notifications.filter(item => !item.read).length > 9 ? '9+' : notifications.filter(item => !item.read).length}</span>}</button>{notificationsOpen && <div className="notification-panel"><div className="notification-heading"><div><b>Notificaciones</b><small>{notifications.filter(item => !item.read).length} sin leer</small></div><button type="button" onClick={() => setNotifications(current => current.map(item => ({...item, read:true})))}>Marcar leídas</button></div>{'Notification' in window && Notification.permission !== 'granted' && <button type="button" className="notification-permission" onClick={async () => { const permission = await Notification.requestPermission(); if (permission === 'granted') setError('Notificaciones del navegador activadas.'); else setError('No se concedió el permiso de notificaciones.') }}>Activar avisos del navegador</button>}{notifications.length ? <div className="notification-items">{notifications.map(item => <button type="button" key={item.id} className={item.read ? 'notification-item' : 'notification-item unread'} onClick={() => { const chat = conversations.find(row => row.conversation_id === item.conversation_id); if (chat) setSelected(chat); setSection('Mensajes'); setNotifications(current => current.map(note => note.id === item.id ? {...note,read:true} : note)); setNotificationsOpen(false) }}><span className="notification-dot"/><span className="notification-copy"><b>{item.title}</b><span>{item.body}</span><small>{shortTime(item.created_at)}</small></span></button>)}</div> : <p className="notification-empty">Todavía no tienes notificaciones.</p>}</div>}</div><div className="avatar user small">{initial}</div></div></header>
       {section === 'Mensajes' ? <div className={`messenger ${selected ? 'has-selected' : ''}`}>
         <aside className="chat-list">
           <div className="list-heading"><div><h2>{newChatMode ? 'Nuevo mensaje' : 'Conversaciones'}</h2><p>{newChatMode ? 'Busca a alguien en Voxly.' : 'Tus conversaciones reales.'}</p></div><button className="add" aria-label={newChatMode ? 'Cancelar nuevo chat' : 'Nuevo chat'} onClick={() => {setNewChatMode(value => !value);setSearchTerm('');setSearchResults([]);setError('')}}>{newChatMode ? <span>×</span> : <Plus size={18}/>}</button></div>
