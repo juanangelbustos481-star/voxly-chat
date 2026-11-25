@@ -324,8 +324,12 @@ export default function App() {
           }))
           if (active) {
             setMessages(hydrated)
-            const { data: reactionRows, error: reactionError } = await supabase!.from('message_reactions').select('id, message_id, user_id, emoji').in('message_id', rows.map(message => message.id))
-            if (!reactionError && reactionRows) setMessageReactions(reactionRows as MessageReaction[])
+            if (rows.length) {
+              const { data: reactionRows, error: reactionError } = await supabase!.from('message_reactions').select('id, message_id, user_id, emoji').in('message_id', rows.map(message => message.id))
+              if (!reactionError && reactionRows) setMessageReactions(reactionRows as MessageReaction[])
+            } else {
+              setMessageReactions([])
+            }
           }
         }
         setLoadingMessages(false)
