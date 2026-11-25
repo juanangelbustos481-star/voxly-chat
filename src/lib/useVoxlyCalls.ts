@@ -120,7 +120,7 @@ export function useVoxlyCalls(client: SupabaseClient | null, session: Session | 
           setIncomingCall(null)
           closeMedia()
         }
-        if (incomingCall?.id === row.id && ['ended', 'declined'].includes(row.status)) setIncomingCall(null)
+        if (['ended', 'declined'].includes(row.status)) setIncomingCall(current => current?.id === row.id ? null : current)
       })
       .on('postgres_changes', {
         event: 'INSERT', schema: 'public', table: 'voxly_call_signals',
@@ -131,7 +131,7 @@ export function useVoxlyCalls(client: SupabaseClient | null, session: Session | 
       })
       .subscribe()
     return () => { void client.removeChannel(channel) }
-  }, [client, session?.user.id, closeMedia, applySignal, incomingCall?.id])
+  }, [client, session?.user.id, closeMedia, applySignal])
 
   useEffect(() => {
     currentCallRef.current = call
@@ -145,6 +145,11 @@ export function useVoxlyCalls(client: SupabaseClient | null, session: Session | 
     if (call || incomingCall) return
     setCallError('')
     try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: true, video: callType === 'video'
+      })
+      localRef.current = stream
+      setLocalStream(stream)
       const { data, error } = await client.from('voxly_call_sessions').insert({
         conversation_id: conversationId, caller_id: session.user.id,
         callee_id: calleeId, call_type: callType, status: 'ringing'
@@ -153,11 +158,6 @@ export function useVoxlyCalls(client: SupabaseClient | null, session: Session | 
       const row = data as CallRow
       currentCallRef.current = row
       setCall(row)
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: true, video: callType === 'video'
-      })
-      localRef.current = stream
-      setLocalStream(stream)
       const peer = makePeer(row, stream)
       const offer = await peer.createOffer()
       await peer.setLocalDescription(offer)
