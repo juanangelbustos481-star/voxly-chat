@@ -183,3 +183,7 @@
 .group-leave{margin-top:18px;padding:9px 12px;border:1px solid #75404c;border-radius:9px;background:#b83c5522;color:#ff9aaa;font-size:10px}
 .group-loading{padding:18px;text-align:center}
 @media(max-width:550px){.group-manage-card{padding:13px}.group-manage-heading{align-items:flex-start;flex-direction:column}.group-member-row{gap:7px;padding:8px}.group-role{font-size:7px;padding:4px 6px}.group-remove{padding:6px 7px;font-size:8px}}
+
+
+/* Controles de notificaciones push */
+.notification-permission{display:block;width:100%;padding:12px 14px;text-align:left;border:0;border-bottom:1px solid #302d43;background:#7449d81c;color:#c4a5ff;font-size:10px;cursor:pointer}.notification-permission:disabled{opacity:.6;cursor:wait}
