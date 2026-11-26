@@ -1,3 +1,88 @@
+const CACHE_NAME = 'voxly-app-v1'
+const APP_SHELL = '/'
+
+// Instalar y guardar la página principal
+self.addEventListener('install', (event) => {
+  event.waitUntil(
+    caches.open(CACHE_NAME).then((cache) => {
+      return cache.add(APP_SHELL)
+    })
+  )
+
+  self.skipWaiting()
+})
+
+// Activar la nueva versión y limpiar cachés antiguas
+self.addEventListener('activate', (event) => {
+  event.waitUntil(
+    caches.keys().then((keys) =>
+      Promise.all(
+        keys
+          .filter((key) => key.startsWith('voxly-app-') && key !== CACHE_NAME)
+          .map((key) => caches.delete(key))
+      )
+    )
+  )
+
+  self.clients.claim()
+})
+
+// Gestionar solicitudes de la aplicación
+self.addEventListener('fetch', (event) => {
+  const request = event.request
+  const url = new URL(request.url)
+
+  // Solo solicitudes GET del mismo origen
+  if (request.method !== 'GET' || url.origin !== self.location.origin) {
+    return
+  }
+
+  // No guardar ni interceptar servicios externos o API
+  if (
+    url.pathname.startsWith('/rest/') ||
+    url.pathname.startsWith('/auth/') ||
+    url.pathname.startsWith('/functions/')
+  ) {
+    return
+  }
+
+  // Para la navegación, intentar internet y usar la página guardada
+  if (request.mode === 'navigate') {
+    event.respondWith(
+      fetch(request)
+        .then((response) => {
+          if (response.ok) {
+            const copy = response.clone()
+            caches.open(CACHE_NAME).then((cache) => cache.put('/', copy))
+          }
+          return response
+        })
+        .catch(async () => {
+          return (await caches.match('/')) || Response.error()
+        })
+    )
+    return
+  }
+
+  // Guardar recursos estáticos de Voxly
+  if (url.pathname.startsWith('/assets/')) {
+    event.respondWith(
+      caches.match(request).then(async (cached) => {
+        if (cached) return cached
+
+        const response = await fetch(request)
+
+        if (response.ok) {
+          const copy = response.clone()
+          const cache = await caches.open(CACHE_NAME)
+          await cache.put(request, copy)
+        }
+
+        return response
+      })
+    )
+  }
+})
 self.addEventListener('push', event => {
   let payload = {}
   try {
